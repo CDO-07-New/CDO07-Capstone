@@ -1,0 +1,14 @@
+# Terraform IaC - CDO-07 · TF4
+# Folder structure sẽ build trong W12:
+#
+# infra/
+# ├── modules/
+# │   ├── networking/
+# │   ├── compute/
+# │   ├── storage/
+# │   ├── observability/
+# │   ├── secrets/
+# │   └── tenant-provision/
+# ├── environments/
+# │   └── sandbox/
+# └── scripts/

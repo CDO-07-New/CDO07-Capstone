@@ -1,0 +1,3 @@
+# Diagrams, screenshots, exported draw.io files
+# PNG / SVG exports đặt ở đây, reference trong docs bằng relative path:
+# ![diagram](assets/architecture-v1.png)
