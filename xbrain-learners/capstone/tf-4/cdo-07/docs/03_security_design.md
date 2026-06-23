@@ -15,52 +15,92 @@
 
 ## 1. Network Security
 
-### 1.1 Network Diagram
+### 1.1 Network Security Diagram
 
-<!-- TODO: Cập nhật sau khi lock angle và biết exact AWS services -->
+<!-- Focus: security boundaries (SG zones), allowed ports, VPC Endpoint isolation.
+     Architecture data-flow → xem 02_infra_design.md §1. -->
 
 ```mermaid
 graph TB
-    subgraph "VPC tf-4-cdo07 (10.4.7.0/16)"
-        subgraph "Public subnet (10.4.7.0/24)"
-            ALB[ALB internal\ntf4-cdo07-alb]
+    CLIENT["k6 / Locust"] -->|"HTTPS 443"| WAF["AWS WAF
+    10k req/5min · PII reject"]
+    WAF -->|"443"| IGW
+
+    subgraph VPC["VPC 10.0.0.0/16 — ap-southeast-1a"]
+        IGW["Internet Gateway"]
+
+        subgraph PUB["Public Subnet 10.0.1.0/24"]
+            subgraph ALB_SG["tf4-cdo07-alb-sg"]
+                ALB["ALB · TLS 1.2+"]
+            end
+            subgraph GF_SG["tf4-cdo07-grafana-sg"]
+                GF["Grafana OSS · EC2 t3.micro"]
+            end
         end
-        subgraph "Private subnet - app (10.4.7.128/25)"
-            ENGINE[AI Engine\nECS Fargate task]
-            INGEST[Metric Ingest\nLambda / Fargate]
+
+        subgraph APP["Private Subnet 10.0.10.0/24 — App Tier"]
+            subgraph APP_SG["tf4-cdo07-app-sg"]
+                SVC["Ingest Service · Fargate"]
+                WKR["Ingest Worker · Fargate"]
+                AI["AI Serving · Fargate"]
+            end
         end
-        subgraph "Private subnet - data (10.4.7.192/26)"
-            TSDB[(Time-Series DB)]
-            AUDIT[(Audit S3 bucket\nObject Lock ON)]
+
+        subgraph DATA["Private Subnet 10.0.20.0/24 — Data Tier"]
+            subgraph DATA_SG["tf4-cdo07-data-sg"]
+                TS["Amazon Timestream"]
+            end
+        end
+
+        subgraph VPCE_SG["tf4-cdo07-vpce-sg"]
+            VPCE["VPC Endpoints (Interface + Gateway)
+            SQS · Secrets Manager · CloudWatch
+            ECR · SNS · S3"]
         end
     end
 
-    CDO_PLATFORM[CDO platform\nwithin TF4] -->|HTTPS 443| ALB
-    ALB -->|8080| ENGINE
-    INGEST -->|write| TSDB
-    ENGINE -->|read| TSDB
-    ENGINE -->|PutObject| AUDIT
-    ENGINE -->|GetSecretValue| SM[Secrets Manager\nVPC endpoint]
-    ENGINE -->|InvokeModel| BEDROCK[Bedrock\nVPC endpoint]
+    IGW -->|"443"| ALB
+    ALB -->|"8080"| APP_SG
+    ALB -->|"3000"| GF
+    APP_SG -->|"Timestream port"| TS
+    APP_SG -->|"443"| VPCE
+    GF_SG -->|"443"| VPCE
 ```
 
 ### 1.2 Security Groups
 
 | SG name | Inbound | Outbound | Attached to |
 |---|---|---|---|
-| `tf4-cdo07-alb-sg` | 443 từ TF4 task force VPC CIDR | 8080 → app-sg | ALB |
-| `tf4-cdo07-app-sg` | 8080 từ alb-sg | 443 → Bedrock/SM VPC endpoint, TSDB port → data-sg | ECS Fargate tasks |
-| `tf4-cdo07-data-sg` | TSDB port từ app-sg only | (none) | Timestream / RDS / AMP |
-| `tf4-cdo07-ingest-sg` | TSDB write port từ ingest sources | TSDB port → data-sg | Ingest Lambda / Fargate |
+| `tf4-cdo07-alb-sg` | 443 (HTTPS) từ AWS WAF qua IGW | 8080 → `tf4-cdo07-app-sg` | Application Load Balancer |
+| `tf4-cdo07-app-sg` | 8080 từ `tf4-cdo07-alb-sg` only | 443 → VPC Endpoints (SQS, Secrets Manager, CloudWatch, ECR); Timestream port → `tf4-cdo07-data-sg` | Ingest Service, Ingest Worker, AI Serving (ECS Fargate) |
+| `tf4-cdo07-data-sg` | Timestream port từ `tf4-cdo07-app-sg` only | (none — stateful response only) | Amazon Timestream |
+| `tf4-cdo07-grafana-sg` | 3000 từ `tf4-cdo07-alb-sg` (Grafana UI) | 443 → CloudWatch VPC Endpoint | Grafana OSS (EC2 t3.micro) |
+| `tf4-cdo07-vpce-sg` | 443 từ `tf4-cdo07-app-sg`, `tf4-cdo07-grafana-sg` | (none) | Tất cả Interface VPC Endpoints |
+
+> **Nguyên tắc**: Mọi SG đều dùng **source SG reference** thay vì CIDR trực tiếp để đảm bảo implicit deny khi service bị detach.
 
 ### 1.3 VPC Endpoints (private traffic, không ra Internet)
 
 | Service | Endpoint type | Purpose |
 |---|---|---|
-| Bedrock Runtime | Interface | AI inference - không qua NAT |
-| Secrets Manager | Interface | Secret fetch - không qua NAT |
-| S3 | Gateway | Audit log write, IaC state |
-| CloudWatch Logs | Interface | Application log không qua NAT |
+| SQS | Interface | Ingest Service enqueue / Ingest Worker poll — không qua NAT |
+| Secrets Manager | Interface | AI Serving + Ingest Worker lấy secret tại runtime |
+| CloudWatch Logs | Interface | Đẩy application log từ App Tier — không qua NAT |
+| CloudWatch Monitoring | Interface | Grafana OSS query metric — không qua NAT |
+| ECR (API + Docker) | Interface | Pull container image cho ECS tasks — không qua NAT |
+| S3 | Gateway | Audit log write (SSE-KMS), Baseline Models read, Terraform state |
+| SNS | Interface | AI Serving gửi alert notification — không qua NAT |
+
+> **Lưu ý**: Không triển khai NAT Gateway — toàn bộ outbound traffic AWS service đi qua VPC Endpoints. Tiết kiệm chi phí NAT (~$32/tháng) phù hợp budget cap $200/tháng.
+
+### 1.4 AWS WAF (Edge Protection)
+
+| Rule | Mô tả | Action |
+|---|---|---|
+| Rate-limit | ≤ 10,000 req/5min per IP | Block + CloudWatch metric |
+| PII regex reject | Reject payload chứa PII pattern (email, phone, card_number) | Block |
+| Schema whitelist | Chỉ accept payload fields đã defined trong Telemetry Contract | Block |
+| SQL injection / XSS | AWS Managed Rules `AWSManagedRulesCommonRuleSet` | Block |
 
 ---
 
@@ -70,26 +110,77 @@ graph TB
 
 | Role | Used by | Key permissions | KHÔNG có |
 |---|---|---|---|
-| `tf4-cdo07-ai-engine-task-role` | ECS Fargate task (AI engine) | `bedrock:InvokeModel` (specific model ARN), `secretsmanager:GetSecretValue` (specific ARN), `s3:PutObject` (audit bucket only), `timestream:WriteRecords` (read), `cloudwatch:PutMetricData` | `iam:*`, `s3:Delete*`, `ec2:*` |
-| `tf4-cdo07-ingest-role` | Metric ingest Lambda / Fargate | `timestream:WriteRecords`, `kinesis:GetRecords` (nếu dùng), `cloudwatch:GetMetricData` | `bedrock:*`, `iam:*` |
-| `tf4-cdo07-platform-deploy-role` | GitHub Actions CI/CD | `ecs:UpdateService`, `ecr:PutImage`, `cloudformation:*` (scoped), `s3:*` (tf-state bucket only) | `iam:CreateUser`, `s3:Delete*` production |
-| `tf4-cdo07-readonly-role` | Mentor review / debug access | `cloudwatch:GetMetricData`, `ecs:Describe*`, `s3:GetObject` (audit bucket) | Mọi write/mutate action |
+| `tf4-cdo07-ai-serving-task-role` | AI Serving (ECS Fargate) | `timestream:Select` (read query 2h window), `timestream:DescribeEndpoints`, `s3:PutObject` (audit bucket `tf4-cdo07-audit-log`), `s3:GetObject` (baseline bucket `tf4-cdo07-baseline-models`), `secretsmanager:GetSecretValue` (ARN `tf4/cdo07/*`), `sns:Publish` (alert topic ARN), `cloudwatch:PutMetricData`, `logs:PutLogEvents`, `kms:GenerateDataKey`, `kms:Decrypt` (CMK ARN) | `iam:*`, `s3:Delete*`, `ec2:*`, `timestream:WriteRecords` |
+| `tf4-cdo07-ingest-svc-task-role` | Ingest Service (ECS Fargate) | `sqs:SendMessage` (ingest queue ARN), `cloudwatch:PutMetricData`, `logs:PutLogEvents`, `kms:GenerateDataKey` (encrypt SQS message) | `timestream:*`, `s3:*`, `iam:*` |
+| `tf4-cdo07-ingest-worker-task-role` | Ingest Worker (ECS Fargate) | `sqs:ReceiveMessage`, `sqs:DeleteMessage` (ingest queue ARN), `timestream:WriteRecords` (BatchWrite), `timestream:DescribeEndpoints`, `cloudwatch:PutMetricData`, `logs:PutLogEvents`, `kms:Decrypt` (decrypt SQS message) | `sqs:CreateQueue`, `iam:*`, `s3:*` |
+| `tf4-cdo07-grafana-ec2-role` | Grafana OSS (EC2 t3.micro) | `cloudwatch:GetMetricData`, `cloudwatch:ListMetrics`, `cloudwatch:GetDashboard`, `timestream:Select` (read-only), `timestream:DescribeEndpoints`, `logs:GetLogEvents` | Mọi write/mutate action, `iam:*` |
+| `tf4-cdo07-eventbridge-invoke-role` | EventBridge (trigger `rate(5 minutes)`) | `ecs:RunTask` (scoped ARN cho AI Serving task) | `iam:*`, `s3:*`, `ec2:*` |
+| `tf4-cdo07-platform-deploy-role` | GitHub Actions CI/CD (OIDC) | `ecs:UpdateService`, `ecs:RegisterTaskDefinition`, `ecr:PutImage`, `ecr:GetAuthorizationToken`, `s3:PutObject` (tf-state bucket), `cloudformation:*` (scoped `tf4-cdo07-*` stack) | `iam:CreateUser`, `iam:CreateRole` (ngoài boundary), `s3:Delete*` production |
+| `tf4-cdo07-readonly-role` | Mentor review / debug access | `cloudwatch:GetMetricData`, `ecs:Describe*`, `timestream:Select`, `s3:GetObject` (audit bucket), `logs:GetLogEvents` | Mọi write/mutate action |
 
 ### 2.2 OIDC cho CI/CD (không dùng static AWS key)
 
 ```yaml
-# GitHub Actions - assume role via OIDC, không hardcode key
+# GitHub Actions - assume role via OIDC, không hardcode AWS Access Key
 - uses: aws-actions/configure-aws-credentials@v4
   with:
     role-to-assume: arn:aws:iam::<ACCOUNT>:role/tf4-cdo07-platform-deploy-role
-    aws-region: us-east-1
+    aws-region: ap-southeast-1
 ```
+
+> **Tại sao OIDC?** Eliminates static credentials (AWS_ACCESS_KEY_ID / SECRET) khỏi GitHub Secrets. Token tự expire sau 1h, giảm blast radius nếu CI runner bị compromise.
 
 ### 2.3 Permission Boundary
 
-<!-- TODO: Attach permission boundary nếu account shared với TF khác -->
 - Boundary ARN: `arn:aws:iam::<ACCOUNT>:policy/tf4-cdo07-boundary`
-- Enforces: không tạo role có quyền vượt ra ngoài `tf4-cdo07-*` resource scope
+- Enforces: không cho phép bất kỳ role nào tạo bởi `tf4-cdo07-platform-deploy-role` có quyền vượt ra ngoài `tf4-cdo07-*` resource scope
+- Áp dụng: Attach vào tất cả IAM roles thuộc project CDO-07
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CDO07ResourceScope",
+      "Effect": "Allow",
+      "Action": "*",
+      "Resource": [
+        "arn:aws:*:ap-southeast-1:<ACCOUNT>:*tf4-cdo07*",
+        "arn:aws:s3:::tf4-cdo07-*",
+        "arn:aws:s3:::tf4-cdo07-*/*"
+      ]
+    },
+    {
+      "Sid": "DenyEscalation",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateUser",
+        "iam:CreateAccessKey",
+        "iam:AttachUserPolicy",
+        "organizations:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### 2.4 Resource Tagging Policy
+
+Tất cả AWS resource phải có tag bắt buộc để phục vụ access control, cost allocation và audit:
+
+| Tag Key | Value | Mục đích |
+|---|---|---|
+| `Project` | `foresight-lens` | Cost allocation, resource grouping |
+| `Team` | `CDO-07` | Ownership identification |
+| `Environment` | `capstone` | Environment classification |
+| `ManagedBy` | `terraform` | Drift detection, compliance |
+
+### 2.5 Cross-account Access
+
+- **Không có cross-account access** trong phạm vi capstone. Toàn bộ resource nằm trong single AWS account.
+- Nếu mở rộng production (multi-account): sử dụng `sts:AssumeRole` cross-account với external ID + condition key `aws:SourceAccount`. Document trong ADR khi cần.
+- **K8s RBAC**: Không applicable — project dùng ECS Fargate, không dùng EKS.
 
 ---
 
@@ -99,22 +190,50 @@ graph TB
 
 | Secret | Path trong Secrets Manager | Rotation | Accessed by |
 |---|---|---|---|
-| Bedrock API key / region config | `tf4/cdo07/bedrock` | Manual (capstone) | ai-engine-task-role |
-| DB credentials (nếu có RDS) | `tf4/cdo07/db` | 30-day auto rotation | app-sg |
-| Grafana API key (annotation) | `tf4/cdo07/grafana` | Manual | ai-engine-task-role |
-| Slack webhook URL | `tf4/cdo07/slack-webhook` | Manual | alert-router-role |
+| Grafana API key (drift annotation) | `tf4/cdo07/grafana` | Manual (capstone) | `tf4-cdo07-ai-serving-task-role` |
+
+**Không applicable trong project này:**
+
+| Secret (template requirement) | Lý do không có |
+|---|---|
+| Bedrock / LLM API key | "LLM-based prediction – Không sử dụng do chi phí cao". Dùng statistical/ML-based forecasting |
+| DB credentials (RDS) | Database là Timestream serverless — IAM auth, không cần credentials |
+| Webhook signing key | Project dùng Amazon SNS cho alerting (push model), không expose webhook endpoint. Không có third-party callback cần verify signature |
+| Slack webhook URL | Alerting qua SNS → email, không dùng Slack |
+
+> **Phân loại config**: SQS Queue URL, SNS Topic ARN, Timestream endpoint là **infrastructure config** — inject qua **ECS Task Definition environment variable** hoặc **SSM Parameter Store**, không lưu trong Secrets Manager.
 
 ### 3.2 Inject Pattern
 
-- **ECS Fargate**: secret reference trong task definition `valueFrom: arn:aws:secretsmanager:...`
-  → inject thành env var tại runtime, không bake vào image
-- **Lambda**: `boto3.client('secretsmanager').get_secret_value()` tại cold start + cache TTL 5min
+- **ECS Fargate (Ingest Worker, AI Serving, Ingest Service)**: secret reference trong task definition:
+  ```json
+  {
+    "name": "GRAFANA_API_KEY",
+    "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT>:secret:tf4/cdo07/grafana"
+  }
+  ```
+  → Inject thành environment variable tại runtime, **không bake vào Docker image**.
+- **Infrastructure config (non-secret)**: inject trực tiếp qua ECS Task Definition environment:
+  ```json
+  [
+    {"name": "SQS_QUEUE_URL", "value": "https://sqs.ap-southeast-1.amazonaws.com/<ACCOUNT>/tf4-cdo07-ingest-queue"},
+    {"name": "SNS_TOPIC_ARN", "value": "arn:aws:sns:ap-southeast-1:<ACCOUNT>:tf4-cdo07-alerts"},
+    {"name": "TIMESTREAM_DB", "value": "tf4-cdo07-metrics"},
+    {"name": "S3_AUDIT_BUCKET", "value": "tf4-cdo07-audit-log"},
+    {"name": "S3_BASELINE_BUCKET", "value": "tf4-cdo07-baseline-models"}
+  ]
+  ```
 
 ### 3.3 Anti-leak Controls
 
-- **Gitleaks** scan trong CI pipeline - block merge nếu detect secret pattern
-- **Dockerfile review**: không có `ENV SECRET=...` trong Dockerfile
-- **Application log redaction**: pattern `Bearer\s+[A-Za-z0-9\-._~+/]+=*` → `[REDACTED]`
+- **Gitleaks** scan trong CI pipeline — block merge nếu detect secret pattern (AWS key, private key, token)
+- **Dockerfile review checklist**: không có `ENV SECRET=...`, `ARG PASSWORD=...` trong any Dockerfile
+- **Application log redaction**: pattern matching tại application layer:
+  - `Bearer\s+[A-Za-z0-9\-._~+/]+=*` → `[REDACTED]`
+  - `AKIA[0-9A-Z]{16}` → `[AWS_KEY_REDACTED]`
+  - `aws_secret_access_key\s*=\s*\S+` → `[REDACTED]`
+- **ECR image scanning**: Enable Amazon ECR image scanning (Basic + Enhanced via Inspector) — block deployment nếu có CRITICAL/HIGH CVE
+- **Pre-commit hook**: `.pre-commit-config.yaml` include `detect-secrets` để chặn secret trước khi commit
 
 ---
 
