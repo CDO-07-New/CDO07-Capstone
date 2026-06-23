@@ -2,159 +2,129 @@
 
 <!-- Doc owner: CDO-07
      Status: Ongoing log W11-W12. Append-only - KHÔNG xóa ADR cũ.
-     Last updated: 2026-06-22 -->
+     Last updated: 2026-06-23
+     Word count target: 800-1500 từ (cả file) -->
 
-> **Khi nào viết ADR**: decision có trade-off thật, reversal cost cao, hoặc buổi chấm sẽ hỏi
-> "sao chọn vậy?". Không cần ADR cho chuyện nhỏ (tên resource, naming convention).
->
-> **Append-only**: khi 1 ADR bị supersede, đánh dấu `Status: Superseded by ADR-NNN`.
-> KHÔNG xóa ADR cũ.
->
-> **Target**: ≥ 3 ADR cho Pack #1 (W11 T6) · ≥ 5 ADR cho Pack #2 (W12 T4)
+> **Append-only**: khi 1 ADR bị thay thế, đánh dấu `Status: Superseded by ADR-NNN`. KHÔNG xóa.
+> **Target**: ≥3 ADR hoàn chỉnh Pack #1 (W11 T6) · ≥5 ADR Pack #2 (W12 T4)
 
 ---
 
-## ADR-001 - Differentiation angle: `< TODO: tên angle chọn >`
+## ADR-000 - Infra angle ban đầu: Serverless-first (Lambda + AMP)
 
-- **Status**: Proposed → (update thành Accepted sau khi lock T3 W11)
-- **Date**: 2026-06-23
-- **Context**: TF4 có 3 CDO compete trên cùng đề Foresight Lens. Mỗi CDO phải chọn
-  differentiation angle riêng không overlap. TF4 yêu cầu high-volume time-series ingest
-  (~50k events/sec), Grafana annotation overlay, và cost budget $200/2 tuần. CDO-07 cần
-  angle vừa technically sound vừa khác biệt so với 2 CDO còn lại.
-- **Decision**: `< TODO: chọn angle gì sau khi thống nhất nội bộ TF4 T3 W11 >`
+- **Status**: Superseded by ADR-001
+- **Date**: 2026-06-22
+- **Context**: Draft ban đầu CDO-07 chọn serverless-first (Lambda cho AI engine + Amazon
+  Managed Prometheus cho storage) vì ops overhead thấp và cost pay-per-invocation.
+- **Decision**: Lambda + AMP làm primary stack.
 - **Consequence**:
-  - ✅ `< Pro 1 >`
-  - ✅ `< Pro 2 >`
-  - ⚠️ `< Trade-off 1 >`
-  - ⚠️ `< Trade-off 2 >`
-- **Alternatives considered**:
-  - Managed Observability (AMP + Managed Grafana): native Grafana, ops-light, nhưng cost cao
-    $9/user/month Grafana license
-  - Streaming-first (Kinesis + Lambda + Timestream): lowest latency, nhưng complexity cao nhất
-  - Lakehouse (S3 + Glue + Athena): cheapest storage, nhưng latency seconds → risk miss lead
-    time ≥15 phút
-  - `< TODO: điền option đã chọn + rejected options >`
+  - ✅ Không cần manage server, cost thấp khi idle
+  - ⚠️ AMP là pull-based, không match push-ingest pattern từ microservice
+  - ⚠️ Lambda cold start ~500ms, Circuit Breaker cần stateful process → không phù hợp
+- **Alternatives considered**: N/A (draft ban đầu, chưa compare đủ)
+
+> ⚠️ **Superseded by ADR-001** (2026-06-23): sau khi review diagram và TF4 requirements
+> chi tiết, team đổi sang event-driven hybrid. Lý do cụ thể xem ADR-001.
 
 ---
 
-## ADR-002 - Time-series storage: `< TODO: Timestream / AMP / S3+Athena >`
+## ADR-001 - Infra angle: Event-driven hybrid (ECS Fargate + SQS + Timestream + Grafana OSS)
+
+- **Status**: Accepted
+- **Date**: 2026-06-23
+- **Context**: TF4 yêu cầu ingest high-volume time-series từ 3 tier-1 service, AI engine
+  predict drift với lead time ≥15 phút, Grafana annotation overlay, budget $200/2 tuần.
+  Serverless-first (ADR-000) bị loại vì AMP pull-based không match push-ingest và Lambda
+  không giữ được Circuit Breaker state. CDO-07 cần angle khác biệt so với 2 CDO còn lại.
+- **Decision**: Chọn **event-driven hybrid**: k6 → WAF → ALB → Ingest Service → SQS →
+  Ingest Worker → Timestream. AI Serving trên ECS Fargate, EventBridge trigger mỗi 5 phút,
+  output qua Grafana OSS annotation + SNS → Slack. Audit log ghi S3 SSE-KMS.
+- **Consequence**:
+  - ✅ SQS buffer absorb traffic spike (sudden spike 3× scenario) mà không drop metric
+  - ✅ ECS Fargate giữ Circuit Breaker state liên tục, không cold start
+  - ✅ Grafana OSS self-hosted: không tốn AMG license $9/user/month, full control annotation API
+  - ⚠️ Nhiều component hơn serverless-first: tăng surface area debug trong 6 ngày W12
+  - ⚠️ Timestream SQL syntax khác PromQL: cần sync với AI team trong Telemetry Contract
+- **Alternatives considered**:
+  - **Serverless-first (AMP + Lambda)**: rejected - AMP pull-based không match push pattern,
+    Lambda cold start conflict Circuit Breaker (xem ADR-000)
+  - **Lakehouse (S3 + Athena)**: rejected - Athena latency 2-10s → risk miss lead time ≥15 phút
+  - **Kinesis thay SQS**: rejected - shard management phức tạp hơn, capstone không cần replay
+
+---
+
+## ADR-002 - Time-series storage: Amazon Timestream
+
+- **Status**: Accepted
+- **Date**: 2026-06-23
+- **Context**: Telemetry Contract yêu cầu storage support time-series query hiệu quả, không
+  phải raw S3. AI engine query 2h window gần nhất để detect drift. Retention ≥90 ngày.
+  Volume capstone: 3 service × ~20 metrics, nhưng design phải scale tới 50k events/sec.
+- **Decision**: **Amazon Timestream** với 2-tier: memory store 2 ngày (fast query AI predict)
+  + magnetic store 90 ngày (cheap, đáp ứng retention). Ingest Worker BatchWrite 100 records/call.
+  AI engine query qua VPC Endpoint, không ra Internet.
+- **Consequence**:
+  - ✅ Managed service: AWS handle provisioning/scaling, CDO-07 không manage server
+  - ✅ 2-tier tự động: hot data memory store cho AI query, cold data magnetic store cho audit
+  - ✅ IAM auth + VPC Endpoint native, không cần custom auth layer
+  - ⚠️ Vendor lock-in: migrate sau capstone cần rewrite query layer trong AI engine
+  - ⚠️ Không support upsert: Ingest Worker retry cùng timestamp → duplicate, cần idempotency check
+- **Alternatives considered**:
+  - **AMP**: PromQL native, Grafana plug-and-play. Rejected - pull-based không match Ingest Worker
+    push pattern (đã loại ở ADR-001)
+  - **S3 + Athena**: cheapest $0.023/GB. Rejected - query latency 2-10s block AI predict call
+  - **InfluxDB self-hosted**: powerful TSDB. Rejected - ops overhead quản lý server không
+    phù hợp 6 ngày build W12
+
+---
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PHẦN BÊN DƯỚI: bạn của bạn điền ADR-003 và ADR-004
+     Deadline: EOD T4 W11 (24/06/2026)
+     ═══════════════════════════════════════════════════════════════ -->
+
+## ADR-003 - Compute cho AI Serving: ECS Fargate over Lambda / EKS
+
+<!-- TODO (bạn kia): component số 7 trong diagram - "AI Serving" trên Private Subnet App Tier
+     Gợi ý context: AI engine serve POST /v1/predict P99 < 1000ms, Circuit Breaker cần
+     stateful process chạy liên tục (không cold start), EventBridge trigger 5 phút/lần.
+     Gợi ý decision: ECS Fargate on-demand (consistent latency, no cold start).
+     Gợi ý alternatives: Lambda (cold start issue), EKS (overkill 1 service). -->
 
 - **Status**: Proposed
 - **Date**: 2026-06-23
-- **Context**: TF4 telemetry contract yêu cầu storage phải support time-series query hiệu quả,
-  KHÔNG phải raw S3. Volume ~50k events/sec peak, retention 90 ngày minimum. 3 options khả thi:
-  Amazon Timestream (managed TSDB), Amazon Managed Prometheus (AMP, pull-based), S3 + Athena
-  (lakehouse, batch query).
+- **Context**: `< TODO >`
 - **Decision**: `< TODO >`
 - **Consequence**:
   - ✅ `< TODO >`
   - ⚠️ `< TODO >`
 - **Alternatives considered**:
-  - **Amazon Timestream**: SQL-like query, managed, write $0.50/GB, query $0.01/GB.
-    Cons: vendor lock-in, more expensive than S3.
-  - **Amazon Managed Prometheus (AMP)**: PromQL, tích hợp Grafana native (pull-based, scrape interval).
-    Cons: pull-based model không phù hợp push event từ microservice, cần Prometheus agent sidecar.
-  - **S3 + Athena**: cheapest ($0.023/GB storage + $5/TB query). Cons: query latency seconds
-    → không phù hợp near-realtime predict.
-  - **InfluxDB self-hosted**: free, powerful. Cons: ops overhead, không managed → nằm ngoài
-    capstone scope.
+  - Lambda: `< TODO >`
+  - EKS: `< TODO >`
 
 ---
 
-## ADR-003 - Compute target cho AI engine: `< TODO: Fargate / Lambda >`
+## ADR-004 - Queue/decoupling: SQS giữa Ingest Service và Ingest Worker
+
+<!-- TODO (bạn kia): component số 5 "SQS" + số 6 "BatchWrite 100 records/call" trong diagram
+     Gợi ý context: Ingest Service nhận /v1/telemetry từ ALB, cần decouple với Ingest Worker
+     để absorb sudden spike 3× (k6 scenario). Direct sync call sẽ drop metric nếu Timestream
+     write chậm. Kinesis overkill vì không cần ordered/replay.
+     Gợi ý decision: SQS Standard Queue, visibility timeout 30s, DLQ sau 3 retry. -->
 
 - **Status**: Proposed
 - **Date**: 2026-06-23
-- **Context**: AI engine cần serve `POST /v1/predict` với P99 < 1000ms, throughput moderate
-  (predict không phải per-event, chỉ per time-window ~1 req/min/service). Budget $200 total.
-  Deployment Contract từ AI team (nhận EOD T4 W11) sẽ confirm compute target.
-- **Decision**: `< TODO: chờ Deployment Contract từ AI team T4 W11 >`
+- **Context**: `< TODO >`
+- **Decision**: `< TODO >`
 - **Consequence**:
   - ✅ `< TODO >`
   - ⚠️ `< TODO >`
 - **Alternatives considered**:
-  - **Lambda**: $0 idle, $0.0000166667/GB-second. Pros: cost optimal cho low-frequency predict.
-    Cons: cold start ~500ms, có thể miss P99 < 1000ms target nếu cold.
-  - **ECS Fargate on-demand**: $0.04048/vCPU-hour. Pros: no cold start, consistent latency.
-    Cons: ~$30/month idle cost.
-  - **ECS Fargate Spot**: 70% cheaper. Pros: cost. Cons: interruption risk, cần fallback.
-  - **Lambda + Provisioned Concurrency**: no cold start + pay-per-use. Cons: more complex + cost.
+  - Kinesis Data Streams: `< TODO >`
+  - Direct synchronous call: `< TODO >`
 
 ---
 
-## ADR-004 - Audit log storage: S3 Object Lock
-
-- **Status**: Accepted
-- **Date**: 2026-06-22
-- **Context**: TF4 hard requirement - audit log mỗi prediction call, encrypted at rest,
-  retention spec'd. Fintech client có SOC2 Type II concern. Cần tamper-evident storage cho
-  mọi AI decision. Options: S3 Object Lock, DynamoDB + hash chain, append-only RDS.
-- **Decision**: S3 Object Lock COMPLIANCE mode, 90 ngày minimum retention.
-  CMK encryption (`tf4-cdo07-audit-cmk`). Athena trên top để query.
-- **Consequence**:
-  - ✅ Tamper-evident by design (AWS managed, không cần custom hash chain)
-  - ✅ Athena query dễ - SQL trên S3 JSON
-  - ✅ Cost thấp ($0.023/GB) so với DynamoDB ($0.25/GB)
-  - ⚠️ Object Lock COMPLIANCE: không thể delete trước 90 ngày kể cả admin - test data cũng bị lock
-  - ⚠️ Query latency Athena 2-5 giây (không realtime), nhưng audit use case không cần realtime
-- **Alternatives considered**:
-  - DynamoDB append-only: pros: millisecond query. Cons: $0.25/GB >> S3, không cần realtime
-    cho audit use case.
-  - CloudWatch Logs với export: pros: native. Cons: không tamper-evident, easy delete.
-  - Custom hash chain DB: pros: crypto proof. Cons: implementation complexity high, out of
-    scope per TF3 spec (Object Lock đủ).
-
----
-
-## ADR-005 - IaC tool: Terraform over CDK
-
-- **Status**: Accepted
-- **Date**: 2026-06-22
-- **Context**: CDO-07 cần IaC cho AWS infra. Options: Terraform (HCL), AWS CDK (TypeScript/Python),
-  CloudFormation (YAML). Team CDO-07 có kinh nghiệm từ W6-W10.
-- **Decision**: Terraform với HCL. State backend S3 + DynamoDB lock.
-- **Consequence**:
-  - ✅ Team familiar từ phase trước → ít learning curve, faster build trong 6 ngày W12
-  - ✅ Provider AWS well-maintained, module registry phong phú
-  - ✅ Plan output rõ ràng, dễ review trong PR
-  - ⚠️ Verbose hơn CDK cho complex infra
-  - ⚠️ Không có type-safe như CDK TypeScript
-- **Alternatives considered**:
-  - AWS CDK: pros: type-safe, higher abstraction. Cons: team không familiar, risk rework trong
-    W12 build window ngắn.
-  - CloudFormation: pros: native, no state management. Cons: verbose YAML, no plan preview,
-    rollback phức tạp.
-
----
-
-## ADR-006 - Fail-open fallback khi AI engine down
-
-- **Status**: Accepted
-- **Date**: 2026-06-22
-- **Context**: TF4 hard requirement - khi serving endpoint down, phải fail-open fallback to
-  static threshold thay vì silent failure. Engineer không được mù hoàn toàn.
-- **Decision**: Circuit Breaker pattern. Khi AI engine `/v1/predict` return 503 × 3 lần liên tiếp
-  trong 60s → circuit OPEN → fallback send static threshold alert đến Slack với note
-  `"[FALLBACK] AI engine unavailable, static threshold triggered"`.
-  Circuit reset sau 5 phút (half-open check).
-- **Consequence**:
-  - ✅ Engineer không bị mù khi AI engine down
-  - ✅ False positive rate tăng tạm thời (static threshold kém chính xác hơn AI) - acceptable
-  - ⚠️ Cần maintain 2 alert paths (AI path + static threshold path)
-  - ⚠️ Static threshold thresholds phải được config explicit per service
-- **Alternatives considered**:
-  - Silent fail (no alert khi engine down): rejected - vi phạm TF4 hard requirement
-  - Always-on static threshold parallel với AI: pros: no gap. Cons: alert noise doubled, defeats
-    purpose của AI engine
-
----
-
-<!-- Append ADR mới ở đây. Mỗi decision mới trong W11-W12 phải có ADR riêng.
-
-Gợi ý topics cần ADR còn lại:
-- ADR-007: CI/CD strategy (GitHub Actions vs CodePipeline)
-- ADR-008: Observability stack (AMP native Grafana vs CloudWatch + Grafana plugin)
-- ADR-009: Metric ingest path (CloudWatch agent vs OTel collector vs direct SDK push)
-- ADR-010: Tenant isolation depth (pool vs silo for time-series data)
--->
+<!-- Append ADR mới ở đây khi có quyết định mới trong W12.
+     ADR tiếp theo nên cover: CI/CD (CodeDeploy Blue/Green), Observability (Grafana OSS +
+     CloudWatch), Security baseline (IAM least-privilege + 3-tier subnet). -->
