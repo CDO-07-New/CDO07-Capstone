@@ -1,60 +1,55 @@
 # Requirements Analysis - Task Force 4 · CDO-07
 
-<!-- Doc owner: CDO-07 Lead
-     Status: Draft (W11 T2-T3) → Final (W11 T6 Pack #1) → Refined (W12 T4 Pack #2)
-     Word target: 800-1500 từ
-     Last updated: 2026-06-22 -->
-
 ## 1. Đề tài context
 
-<!-- Refer Nhóm AI's 01_requirements.md - restate ngắn gọn (1 paragraph) -->
-<!-- TODO: Cập nhật sau khi đọc docs của nhóm AI -->
+Hệ thống giám sát và dự báo chủ động **Foresight Lens** được thiết kế để giải quyết bài toán vận hành thực tế cho một khách hàng Fintech quy mô tầm trung. Hiện tại, doanh nghiệp đang phục vụ khoảng 3.5 triệu người dùng hoạt động (active users), với mức tải ngày thường đạt 2.8k Requests Per Second (RPS) và đạt đỉnh (peak traffic) lên tới 9k RPS trong các sự kiện lớn như Black Friday. Toàn bộ hệ thống core-banking và tài chính phụ trợ đang vận hành thông qua cụm hạ tầng gồm hơn 120 microservices production triển khai trên nền tảng AWS ECS Fargate, kết hợp với các CSDL RDS Aurora MySQL, DynamoDB và hệ thống hàng đợi SQS.
 
-TF4 - **Foresight Lens**: Client là Head of SRE tại một fintech mid-size (~3.5M user active,
-~120 microservice trên ECS Fargate + RDS Aurora + DynamoDB + SQS). Client miss SLO **7 lần
-liên tiếp** trong 3 tháng không phải do incident catastrophic, mà do **capacity exhaustion
-silent** - RDS CPU bò lên 100% trước khi alert fire, queue backlog âm thầm tăng 6×, ALB
-connection limit chạm trần lúc Friday spike. Mỗi lần đều phát hiện sau khi user complain
-qua support ticket (18-25 ticket trước khi internal alert fire).
+### Vấn đề cốt lõi của khách hàng
+Trong vòng 3 tháng vừa qua, đội ngũ SRE (Site Reliability Engineering) của doanh nghiệp đã làm giảm uy tín thương hiệu khi vi phạm chỉ số SLO cam kết về độ sẵn sàng của hệ thống (Monthly Availability Target 99.9%) trong 7 lần liên tiếp. Đáng chú ý, nguyên nhân không xuất phát từ các sự cố sập nguồn thảm họa (catastrophic incidents), mà lại đến từ các lỗi cạn kiệt tài nguyên âm thầm (capacity exhaustion silent) diễn ra từ từ theo thời gian:
+* CPU của các cụm cơ sở dữ liệu RDS Aurora MySQL tăng dần đều và neo giữ ở mức 100% suốt 90 phút trước khi làm nghẽn hoàn toàn kết nối (connection pool exhaustion).
+* Lượng tin nhắn tồn đọng (backlog) trong hệ thống hàng đợi SQS tích tụ âm thầm lên gấp 6 lần khiến các ứng dụng tiêu thụ dữ liệu (consumers) rơi vào trạng thái timeout.
+* Giới hạn kết nối (connection limit) trên Application Load Balancer (ALB) chạm ngưỡng trần mỗi khi có traffic spike vào cuối tuần.
 
-Mục tiêu: xây **Foresight Lens** - system predict drift + capacity exhaustion **≥15 phút
-trước** khi SLO breach xảy ra, kèm capacity recommendation actionable. Không auto-remediate
-- predict + recommend + manual approval gate.
+Tất cả các sự cố trên đều bị phát hiện muộn sau khi có từ 18 đến 25 khiếu nại (support tickets) từ phía người dùng cuối phản hồi về bộ phận CS, thay vì được phát hiện chủ động từ hệ thống giám sát nội bộ. Khách hàng đã có sẵn các dashboard CloudWatch và DataDog, nhưng họ thiếu một giải pháp tự động hóa có khả năng học baseline động thay vì dựa vào các ngưỡng cấu hình tĩnh (static thresholds) dễ gây nhiễu alert (alert fatigue) hoặc bỏ sót các biến động chậm (slow drift).
+
+### Mục tiêu của Foresight Lens
+Xây dựng một hệ thống phân tích và dự báo chuỗi thời gian (time-series metrics) hoạt động liên tục 24/7 để:
+1. Tự động thu thập và phân tích các chỉ số tài nguyên từ 3 dịch vụ Tier-1 cốt lõi.
+2. Học tập hành vi bình thường (per-service baseline) theo chu kỳ tuần để nhận diện tính chất mùa vụ của ngành tài chính.
+3. Chủ động phát tín hiệu cảnh báo (proactive ping) trước ít nhất 15 phút khi hệ thống có dấu hiệu drift hoặc sắp cạn kiệt tài nguyên (capacity exhaustion).
+4. Đưa ra các khuyến nghị hành động cụ thể (Actionable Capacity Recommendation) có cấu trúc tường minh để kỹ sư SRE phê duyệt bằng tay (manual approval gate).
+
+---
 
 ## 2. Infra non-functional requirements
 
-| NFR | Target | Justification |
-|---|---|---|
-| Multi-tenant scale | ≥ 3 service (tier-1) demo, designed for 120 | Capstone scope per TF4 spec |
-| SLO p99 latency (AI API) | < 1000ms | From AI API contract |
-| Availability platform | ≥ 99.5% | Subscription SLA demo |
-| Error rate | < 0.5% | Customer trust |
-| Lead time prediction | ≥ 15 phút trước SLO breach | Hard requirement TF4 |
-| Cost capstone | ≤ $200 / 2 tuần | Client budget constraint |
-| Onboarding SLA (new service) | < 30 min từ register → baseline ready | Sales requirement |
-| Metric ingest throughput | ~50k events/sec peak | TF4 high-volume time-series |
-| Metric retention | ≥ 90 ngày | Baseline training + audit |
-| Security baseline | IAM least-privilege + audit encrypted 90d | Compliance SOC2 |
+Để hệ thống Foresight Lens hoạt động ổn định và đáp ứng các tiêu chuẩn khắt khe của một hệ thống tài chính, hạ tầng do nhóm CDO triển khai phải cam kết đạt được các chỉ số phi chức năng sau đây:
 
-## 3. Differentiation angle (KEY)
+| Chỉ số NFR | Ngưỡng Mục tiêu (Target) | Khung Lý do & Ràng buộc Kỹ thuật (Justification) |
+| :--- | :--- | :--- |
+| **Multi-tenant scale** | ≥ 50 tenants | Hệ thống được thiết kế để đóng gói thành sản phẩm thương mại hóa (SaaS), cho phép quản lý và cô lập dữ liệu metric từ tối thiểu 50 tenant khách hàng khác nhau. |
+| **SLO p99 latency** | < 1000ms | Áp dụng nghiêm ngặt cho điểm cuối API `/v1/predict`. Thời gian xử lý từ lúc nhận payload time-series window đến khi trả về kết quả dự báo không được quá 1 giây để bảo toàn thời gian xử lý sự cố. |
+| **Availability** | ≥ 99.5% | Cam kết độ sẵn sàng ổn định cho toàn bộ pipeline ingestion và hệ thống lưu trữ dữ liệu giám sát cốt lõi, đảm bảo không làm đứt gãy luồng metric truyền về. |
+| **Error rate** | < 0.5% | Tỷ lệ lỗi sinh ra trên đường truyền dẫn dữ liệu (drop metric, network error) phải được kiểm soát dưới 0.5% để tránh làm sai lệch tập dữ liệu đầu vào của mô hình AI. |
+| **Cost per tenant/month** | ~$1.90 / tenant | Dựa trên mục tiêu phân bổ ngân sách tối ưu của dự án, tổng chi phí hạ tầng AWS duy trì ở mức ~$95/tháng. Với quy mô tối thiểu 50 tenants, chi phí trên mỗi tenant cực kỳ cạnh tranh. |
+| **Onboarding SLA** | < 30 phút | Thời gian từ lúc một microservice mới được đăng ký vào hệ thống Foresight Lens cho đến khi hạ tầng lưu trữ và phân tách dữ liệu sẵn sàng tiếp nhận metric. |
+| **Security baseline** | IAM least-privilege + audit 90 ngày | Toàn bộ các dịch vụ AWS cấu hình chặt chẽ qua IAM Roles, mã hóa dữ liệu tại chỗ (Encryption at rest) và lưu vết toàn bộ hoạt động truy cập thông qua CloudTrail để đáp ứng chuẩn SOC2. |
 
-<!-- TODO: Lock angle sau khi thống nhất với 2 CDO còn lại trong TF4 - deadline T3 W11 -->
-<!-- Chọn 1 trong các option dưới đây, xóa các option không chọn, điền lý do cụ thể -->
+---
 
-- **Angle chọn**: `< TODO: serverless-first / lakehouse / managed-observability / streaming-first >`
-- **Why this angle**: `< TODO: fill sau khi thống nhất nội bộ TF4 >`
-- **Trade-off chấp nhận**: `< TODO >`
-- **Locked T3 W11**: 2026-06-23
+## 3. Differentiation Angle (KEY)
 
-> **Gợi ý angle cho CDO-07** (xóa section này sau khi chốt):
-> - **Managed Observability** (Amazon Managed Prometheus + Managed Grafana): native time-series
->   query, Grafana annotation embed sẵn, alert integration. Win axis: integration speed + ops
->   simplicity. Trade-off: vendor lock-in AWS managed services, cost cao hơn self-hosted.
-> - **Streaming-first** (Kinesis Data Streams + Lambda + Timestream): near-realtime ingest,
->   low-latency detection. Win axis: lead time ngắn nhất. Trade-off: complexity cao, Lambda cold start.
-> - **Lakehouse** (S3 + Glue + Athena + QuickSight): durable, cheap long-term. Win axis: cost
->   + historical depth 90 ngày. Trade-off: latency cao hơn (batch), không realtime.
+Sau khi nghiên cứu sâu sắc về bản chất bài toán và các rủi ro kỹ thuật liên quan đến độ trễ dữ liệu và chi phí, nhóm quyết định lựa chọn hướng kiến trúc làm điểm nhấn cạnh tranh độc quyền:
 
+* **Angle lựa chọn:** **TSDB-Centric Hybrid Streaming (Kinesis Data Stream + Amazon Timestream)**.
+* **Why this angle (Trục chiến thắng - Win Axis):** Khách hàng yêu cầu một hệ thống có khả năng đưa ra dự báo với **Lead time ≥ 15 phút** trước khi xảy ra vi phạm SLO. Để làm được điều này, dữ liệu đầu vào của AI Engine phải là dữ liệu "tươi nhất" (Real-time granularity) và giữ nguyên độ phân giải mịn trong suốt **90 ngày lưu trữ lịch sử**. 
+  
+  Nếu chọn hướng thiết kế Lakehouse (Option B), hệ thống sẽ bị dính độ trễ lớn do cơ chế gom lô (batching) của Kinesis Firehose và tiến trình lên lịch (schedule) của AWS Glue Job, dẫn đến nguy cơ cao bị trễ cửa sổ vàng 15 phút để cứu hệ thống. Nếu chọn hướng Managed-lite (Option C) sử dụng CloudWatch Custom Metrics, hệ thống sẽ rơi vào rủi ro tự động nén dữ liệu (down-sampling) sau 15 ngày, làm mất đi các chi tiết dịch chuyển chậm (slow drift) mà AI cần học. 
+  
+  Do đó, việc đưa **Amazon Timestream** làm hạt nhân lưu trữ kết hợp tầng đệm **Kinesis Data Stream** là lựa chọn tối ưu nhất. Kiến trúc này giúp ghi nhận dữ liệu thông suốt ở quy mô peak 50k events/sec, thực hiện truy vấn chuỗi thời gian (time-series query) tốc độ cao với độ trễ mili-giây, cung cấp dữ liệu thô toàn vẹn cho mô hình AI đưa ra kết quả dự báo chính xác nhất (đáp ứng tiêu chí bắt bắt được ≥ 80% drift của khách hàng).
+* **Trade-off chấp nhận:** Để đổi lấy độ phân giải dữ liệu hoàn hảo và tốc độ truy vấn tức thời, nhóm chấp nhận độ phức tạp cao hơn trong việc quản lý và tối ưu hóa chi phí truy vấn (Query Scan Cost) trên Amazon Timestream nhằm giữ vững mục tiêu tổng chi phí không vượt quá mức circuit breaker $200/tháng.
+
+---
 ## 4. Comparison với 2 nhóm cùng task force
 
 <!-- TODO: Điền sau khi biết angle của 2 CDO còn lại (T3 W11) -->
