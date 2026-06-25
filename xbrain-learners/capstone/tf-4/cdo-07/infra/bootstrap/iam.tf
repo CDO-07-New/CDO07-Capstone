@@ -32,6 +32,7 @@ resource "aws_iam_role_policy_attachment" "github_deploy" {
   policy_arn = aws_iam_policy.github_deploy.arn
 }
 
+#checkov:skip=CKV_AWS_356:Plan role needs wildcard resources for AWS read-only APIs that do not support resource-level permissions.
 data "aws_iam_policy_document" "github_plan" {
   statement {
     sid    = "AllowReadOnlyForPlanning"
@@ -114,6 +115,10 @@ data "aws_iam_policy_document" "github_plan" {
   }
 }
 
+#checkov:skip=CKV_AWS_108:Deploy role is scoped by GitHub OIDC trust policy and resource prefixes where AWS supports them; bootstrap/demo services still require broad service actions.
+#checkov:skip=CKV_AWS_109:Deploy role can manage tf4-cdo07 IAM roles only; broader service actions are required for Terraform-managed ECS/ALB/SQS/Timestream resources.
+#checkov:skip=CKV_AWS_111:Terraform deploy role needs write actions across AWS services during capstone bootstrap; production hardening should split this into per-service roles.
+#checkov:skip=CKV_AWS_356:Some Terraform-managed AWS APIs do not support resource-level permissions, so wildcard resources are required for this CI deploy role.
 data "aws_iam_policy_document" "github_deploy" {
   statement {
     sid    = "AllowTerraformStateReadWrite"

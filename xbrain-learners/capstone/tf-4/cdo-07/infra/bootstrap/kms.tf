@@ -13,6 +13,9 @@ resource "aws_kms_alias" "bootstrap" {
 
 data "aws_caller_identity" "current" {}
 
+#checkov:skip=CKV_AWS_109:KMS key policy grants account-root administration to prevent lockout, which is AWS standard for customer-managed keys.
+#checkov:skip=CKV_AWS_111:KMS key policies use Resource '*' because the policy is attached directly to the key being created.
+#checkov:skip=CKV_AWS_356:KMS key policies conventionally use Resource '*' for statements scoped by the key policy attachment itself.
 data "aws_iam_policy_document" "kms_key_policy" {
   statement {
     sid    = "AllowAccountRootFullAdministration"

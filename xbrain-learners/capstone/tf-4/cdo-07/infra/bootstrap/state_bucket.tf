@@ -1,3 +1,6 @@
+#checkov:skip=CKV_AWS_18:Bootstrap state bucket access is audited through CloudTrail management/data events in the account; separate access-log bucket is out of capstone scope.
+#checkov:skip=CKV_AWS_144:Cross-region replication is out of scope for the single-region capstone account; bucket versioning is enabled for state recovery.
+#checkov:skip=CKV2_AWS_62:Event notifications are not required for Terraform state storage and would add operational noise for this capstone bootstrap.
 resource "aws_s3_bucket" "terraform_state" {
   bucket = var.state_bucket_name
 }
@@ -7,6 +10,23 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
 
   versioning_configuration {
     status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "terraform_state" {
+  bucket = aws_s3_bucket.terraform_state.id
+
+  rule {
+    id     = "retain-noncurrent-state-versions"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
   }
 }
 

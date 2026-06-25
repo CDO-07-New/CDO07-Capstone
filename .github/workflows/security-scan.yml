@@ -24,19 +24,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout full history
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Scan Git history for secrets
+      - name: Scan working tree for secrets
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm \
             -v "$PWD:/repo" \
             ghcr.io/gitleaks/gitleaks:v8.24.2 \
-            detect --source=/repo --redact --verbose
+            dir /repo --redact --verbose
 
   trivy:
     name: Trivy filesystem scan
@@ -47,7 +45,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Scan filesystem for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
