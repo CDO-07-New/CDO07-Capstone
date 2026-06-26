@@ -1,0 +1,4 @@
+pytest
+moto[ssm,s3,sns,aps]
+pytest-mock
+requests-mock
