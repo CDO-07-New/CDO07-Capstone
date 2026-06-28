@@ -3,6 +3,10 @@ locals {
   project     = "tf4-cdo07"
   environment = "staging"
 
+  # Bootstrap KMS key ARN — shared across all modules for encryption at rest.
+  # This value comes from `terraform output` of the bootstrap workspace.
+  kms_key_arn = "arn:aws:kms:us-east-1:${data.aws_caller_identity.current.account_id}:alias/${local.project}-bootstrap"
+
   common_tags = {
     Project     = local.project
     Environment = local.environment
@@ -11,3 +15,5 @@ locals {
     TaskForce   = "TF4"
   }
 }
+
+data "aws_caller_identity" "current" {}
