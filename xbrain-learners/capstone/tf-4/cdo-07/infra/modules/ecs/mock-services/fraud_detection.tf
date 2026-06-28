@@ -8,10 +8,16 @@ module "fraud_detection" {
   cpu    = 256 # 0.25 vCPU
   memory = 512 # 0.5 GB
 
+  # Use custom IAM roles (defined in iam.tf)
+  create_task_exec_iam_role = false
+  create_tasks_iam_role     = false
+  task_exec_iam_role_arn    = aws_iam_role.mock_task_execution.arn
+  tasks_iam_role_arn        = aws_iam_role.mock_task.arn
+
   container_definitions = {
     fraud = {
       name      = "fraud-detection"
-      image     = "ghcr.io/cdo-07/fraud-detection:v1.0.0"
+      image     = var.ecr_image_uri_fraud
       essential = true
       port_mappings = [
         {
@@ -19,6 +25,21 @@ module "fraud_detection" {
           protocol      = "tcp"
         }
       ]
+
+      environment = [
+        { name = "SERVICE_NAME", value = "fraud-detection" },
+        { name = "KINESIS_STREAM_NAME", value = var.kinesis_stream_name },
+        { name = "AWS_REGION", value = var.aws_region },
+      ]
+
+      log_configuration = {
+        log_driver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.mock_services.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "fraud-detection"
+        }
+      }
     }
   }
 

@@ -24,6 +24,45 @@ variable "alb_http_listener_arn" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region for CloudWatch log configuration."
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "kinesis_stream_arn" {
+  description = "ARN of the Kinesis Data Stream. Used for IAM policy scoping."
+  type        = string
+}
+
+variable "kinesis_stream_name" {
+  description = "Name of the Kinesis Data Stream. Passed as env var to containers."
+  type        = string
+}
+
+variable "kms_key_arn" {
+  description = "ARN of the KMS CMK for encrypting Kinesis records."
+  type        = string
+}
+
+variable "ecr_image_uri_payment" {
+  description = "Container image URI for payment-gw. Default is placeholder nginx."
+  type        = string
+  default     = "public.ecr.aws/nginx/nginx:alpine"
+}
+
+variable "ecr_image_uri_ledger" {
+  description = "Container image URI for ledger-svc. Default is placeholder nginx."
+  type        = string
+  default     = "public.ecr.aws/nginx/nginx:alpine"
+}
+
+variable "ecr_image_uri_fraud" {
+  description = "Container image URI for fraud-detection. Default is placeholder nginx."
+  type        = string
+  default     = "public.ecr.aws/nginx/nginx:alpine"
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
