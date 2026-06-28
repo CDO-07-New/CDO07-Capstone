@@ -1,291 +1,298 @@
-import datetime as dt
-import hashlib
+# lambda/window-feeder/app.py
+
+import os
 import json
 import logging
-import os
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
-import uuid
+from datetime import datetime, timezone
 
 import boto3
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
+import requests
+from botocore.config import Config
 
+# =================================================================
+# Hằng số và cấu hình
+# =================================================================
+# Cấu hình logging.
+# Best practice là đặt mức độ log thông qua biến môi trường.
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logger = logging.getLogger()
+logger.setLevel(LOG_LEVEL)
 
-LOGGER = logging.getLogger()
-LOGGER.setLevel(os.getenv("LOG_LEVEL", "INFO"))
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+TIMESTREAM_DATABASE_NAME = os.environ.get("TIMESTREAM_DATABASE_NAME")
+TIMESTREAM_TABLE_NAME = os.environ.get("TIMESTREAM_TABLE_NAME")
+TIMESTREAM_QUERY_WINDOW = os.environ.get("TIMESTREAM_QUERY_WINDOW")
+AI_ENGINE_PREDICT_URL = os.environ.get("AI_ENGINE_PREDICT_URL")
+AI_ENGINE_TIMEOUT_SECONDS = int(os.environ.get("AI_ENGINE_TIMEOUT_SECONDS", "5"))
+AUDIT_S3_BUCKET = os.environ.get("AUDIT_S3_BUCKET")
+AUDIT_S3_PREFIX = os.environ.get("AUDIT_S3_PREFIX")
+INFERENCE_ENABLED_PARAMETER_NAME = os.environ.get("INFERENCE_ENABLED_PARAMETER_NAME")
+DRIFT_ALERT_SNS_TOPIC_ARN = os.environ.get("DRIFT_ALERT_SNS_TOPIC_ARN")
 
-REGION = os.getenv("AWS_REGION", "us-east-1")
-AMP_WORKSPACE_ID = os.environ["AMP_WORKSPACE_ID"]
-AMP_QUERY_WINDOW = os.getenv("AMP_QUERY_WINDOW", "2h")
-AI_ENGINE_PREDICT_URL = os.environ["AI_ENGINE_PREDICT_URL"]
-AI_ENGINE_TIMEOUT_SECONDS = float(os.getenv("AI_ENGINE_TIMEOUT_SECONDS", "5"))
-BASELINE_S3_BUCKET = os.getenv("BASELINE_S3_BUCKET")
-AUDIT_S3_BUCKET = os.environ["AUDIT_S3_BUCKET"]
-AUDIT_S3_PREFIX = os.getenv("AUDIT_S3_PREFIX", "window-feeder/")
-INFERENCE_ENABLED_PARAMETER_NAME = os.environ["INFERENCE_ENABLED_PARAMETER_NAME"]
-DRIFT_ALERT_SNS_TOPIC_ARN = os.environ["DRIFT_ALERT_SNS_TOPIC_ARN"]
+# Tải và kiểm tra cấu hình runtime từ biến môi trường của Lambda.
+# Hàm này được gọi bên trong các hàm khác thay vì chỉ lúc import để unit test
+# có thể vá biến môi trường trước khi chạy mã Lambda.
+def load_config():
+    """Nạp lại cấu hình từ environment để Lambda và unit test dùng cùng một luồng chạy."""
+    global REGION
+    global TIMESTREAM_DATABASE_NAME, TIMESTREAM_TABLE_NAME, TIMESTREAM_QUERY_WINDOW
+    global AI_ENGINE_PREDICT_URL, AI_ENGINE_TIMEOUT_SECONDS
+    global AUDIT_S3_BUCKET, AUDIT_S3_PREFIX, INFERENCE_ENABLED_PARAMETER_NAME, DRIFT_ALERT_SNS_TOPIC_ARN
 
-DEFAULT_QUERIES = [
-    {
-        "name": "request_rate",
-        "query": 'sum(rate(http_requests_total[5m])) by (service)',
-    },
-    {
-        "name": "error_rate",
-        "query": 'sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)',
-    },
-    {
-        "name": "latency_p95",
-        "query": (
-            "histogram_quantile(0.95, "
-            "sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))"
-        ),
-    },
-]
+    required = [
+        "AWS_REGION",
+        "TIMESTREAM_DATABASE_NAME",
+        "TIMESTREAM_TABLE_NAME",
+        "TIMESTREAM_QUERY_WINDOW",
+        "AI_ENGINE_PREDICT_URL",
+        "AI_ENGINE_TIMEOUT_SECONDS",
+        "AUDIT_S3_BUCKET",
+        "AUDIT_S3_PREFIX",
+        "INFERENCE_ENABLED_PARAMETER_NAME",
+        "DRIFT_ALERT_SNS_TOPIC_ARN",
+    ]
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
-ssm = boto3.client("ssm")
-s3 = boto3.client("s3")
-sns = boto3.client("sns")
-session = boto3.Session()
+    REGION = os.environ["AWS_REGION"]
+    TIMESTREAM_DATABASE_NAME = os.environ["TIMESTREAM_DATABASE_NAME"]
+    TIMESTREAM_TABLE_NAME = os.environ["TIMESTREAM_TABLE_NAME"]
+    TIMESTREAM_QUERY_WINDOW = os.environ["TIMESTREAM_QUERY_WINDOW"]
+    AI_ENGINE_PREDICT_URL = os.environ["AI_ENGINE_PREDICT_URL"]
+    AI_ENGINE_TIMEOUT_SECONDS = int(os.environ["AI_ENGINE_TIMEOUT_SECONDS"])
+    AUDIT_S3_BUCKET = os.environ["AUDIT_S3_BUCKET"]
+    AUDIT_S3_PREFIX = os.environ["AUDIT_S3_PREFIX"]
+    INFERENCE_ENABLED_PARAMETER_NAME = os.environ["INFERENCE_ENABLED_PARAMETER_NAME"]
+    DRIFT_ALERT_SNS_TOPIC_ARN = os.environ["DRIFT_ALERT_SNS_TOPIC_ARN"]
 
+# =================================================================
+# Khởi tạo AWS client
+# =================================================================
+# Khởi tạo các client của AWS SDK (boto3) bên ngoài hàm handler.
+# Điều này cho phép Lambda tái sử dụng kết nối giữa các lần gọi, giúp cải thiện hiệu năng.
+boto_config = Config(
+    region_name=REGION,
+    retries={'max_attempts': 3, 'mode': 'standard'} # Tự động thử lại 3 lần nếu có lỗi tạm thời
+)
+ssm_client = boto3.client("ssm", config=boto_config) # Dùng để đọc tham số từ SSM Parameter Store
+timestream_query_client = boto3.client("timestream-query", config=boto_config) # Dùng để truy vấn Amazon Timestream
+s3_client = boto3.client("s3", config=boto_config)   # Dùng để ghi audit log vào S3
+sns_client = boto3.client("sns", config=boto_config) # Dùng để gửi cảnh báo tới SNS
 
-def handler(event, context):
-    run_id = str(uuid.uuid4())
-    started_at = utc_now()
+# =================================================================
+# Các hàm hỗ trợ
+# =================================================================
 
-    audit = {
-        "run_id": run_id,
-        "started_at": started_at,
-        "event": event,
-        "status": "started",
-    }
-
+# Đọc cờ điều khiển vận hành từ SSM Parameter Store.
+# Nếu tham số này không đúng bằng "true", Lambda sẽ thoát sớm và không
+# truy vấn Timestream hoặc gọi AI Engine.
+def is_inference_enabled() -> bool:
+    """Kiểm tra "cổng" điều khiển hoạt động trong SSM Parameter Store."""
+    load_config()
     try:
-        if not inference_enabled():
-            audit["status"] = "skipped"
-            audit["reason"] = "inference_disabled"
-            write_audit(audit)
-            return response(200, audit)
+        logger.info(f"Checking SSM parameter: {INFERENCE_ENABLED_PARAMETER_NAME}")
+        parameter = ssm_client.get_parameter(Name=INFERENCE_ENABLED_PARAMETER_NAME)
+        is_enabled = parameter["Parameter"]["Value"].lower() == "true"
+        logger.info(f"Inference enabled status: {is_enabled}")
+        return is_enabled
+    except Exception as e:
+        logger.error(f"Failed to read SSM parameter: {e}")
+        # An toàn là trên hết: nếu không đọc được tham số, mặc định là hệ thống đang tắt.
+        return False
 
-        window = event.get("window") or AMP_QUERY_WINDOW
-        predict_path = event.get("predict_path", "/v1/predict")
-        queries = load_queries(event)
-
-        metric_window = query_amp_window(queries, window)
-        baseline_ref = build_baseline_ref()
-        payload = {
-            "run_id": run_id,
-            "window": window,
-            "started_at": started_at,
-            "metric_source": "amp",
-            "metrics": metric_window,
-            "baseline": baseline_ref,
-        }
-
-        prediction = call_ai_engine(payload, predict_path)
-        audit.update(
-            {
-                "status": "completed",
-                "metric_count": count_metric_samples(metric_window),
-                "prediction": prediction,
-                "completed_at": utc_now(),
-            }
-        )
-
-        write_audit(audit)
-
-        if prediction.get("drift_detected") is True:
-            publish_alert("drift_detected", audit)
-
-        return response(200, audit)
-
-    except Exception as exc:
-        LOGGER.exception("Window Feeder failed")
-        audit.update(
-            {
-                "status": "failed",
-                "error": str(exc),
-                "completed_at": utc_now(),
-            }
-        )
-        write_audit(audit)
-        publish_alert("window_feeder_failed", audit)
-        return response(500, audit)
-
-
-def inference_enabled():
-    result = ssm.get_parameter(Name=INFERENCE_ENABLED_PARAMETER_NAME)
-    value = result["Parameter"]["Value"].strip().lower()
-    return value in ("1", "true", "yes", "enabled", "on")
-
-
-def load_queries(event):
-    if isinstance(event.get("queries"), list):
-        return event["queries"]
-
-    raw_queries = os.getenv("AMP_QUERIES_JSON")
-    if raw_queries:
-        return json.loads(raw_queries)
-
-    return DEFAULT_QUERIES
-
-
-def query_amp_window(queries, window):
-    end = int(time.time())
-    start = end - parse_duration_seconds(window)
-
-    results = []
-    for item in queries:
-        name = item["name"]
-        query = item["query"]
-        data = amp_query_range(query=query, start=start, end=end, step=item.get("step", "60s"))
-        results.append(
-            {
-                "name": name,
-                "query": query,
-                "result_type": data.get("resultType"),
-                "result": data.get("result", []),
-            }
-        )
-
-    return results
-
-
-def amp_query_range(query, start, end, step):
-    params = urllib.parse.urlencode(
-        {
-            "query": query,
-            "start": start,
-            "end": end,
-            "step": step,
-        }
-    )
-    url = (
-        f"https://aps-workspaces.{REGION}.amazonaws.com"
-        f"/workspaces/{AMP_WORKSPACE_ID}/api/v1/query_range?{params}"
-    )
-    signed_headers = sign_request("GET", url)
-
-    request = urllib.request.Request(url, method="GET", headers=signed_headers)
-    with urllib.request.urlopen(request, timeout=AI_ENGINE_TIMEOUT_SECONDS) as res:
-        body = json.loads(res.read().decode("utf-8"))
-
-    if body.get("status") != "success":
-        raise RuntimeError(f"AMP query failed: {body}")
-
-    return body["data"]
-
-
-def sign_request(method, url, body=None, headers=None):
-    credentials = session.get_credentials().get_frozen_credentials()
-    aws_request = AWSRequest(method=method, url=url, data=body, headers=headers or {})
-    SigV4Auth(credentials, "aps", REGION).add_auth(aws_request)
-    return dict(aws_request.headers.items())
-
-
-def call_ai_engine(payload, predict_path):
-    url = AI_ENGINE_PREDICT_URL
-    if predict_path and not url.endswith(predict_path):
-        url = AI_ENGINE_PREDICT_URL.rstrip("/") + "/" + predict_path.lstrip("/")
-
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Idempotency-Key": payload["run_id"],
-        },
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=AI_ENGINE_TIMEOUT_SECONDS) as res:
-            response_body = res.read().decode("utf-8")
-            return json.loads(response_body) if response_body else {}
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8")
-        raise RuntimeError(f"AI Engine returned HTTP {exc.code}: {error_body}") from exc
-
-
-def write_audit(audit):
-    key = build_audit_key(audit["run_id"])
-    audit["audit_s3_uri"] = f"s3://{AUDIT_S3_BUCKET}/{key}"
-    s3.put_object(
-        Bucket=AUDIT_S3_BUCKET,
-        Key=key,
-        Body=json.dumps(audit, separators=(",", ":"), default=str).encode("utf-8"),
-        ContentType="application/json",
-    )
-
-
-def publish_alert(reason, audit):
-    sns.publish(
-        TopicArn=DRIFT_ALERT_SNS_TOPIC_ARN,
-        Subject=f"Window Feeder alert: {reason}",
-        Message=json.dumps(
-            {
-                "reason": reason,
-                "run_id": audit.get("run_id"),
-                "status": audit.get("status"),
-                "error": audit.get("error"),
-                "audit_s3_uri": audit.get("audit_s3_uri"),
-                "prediction": audit.get("prediction"),
-            },
-            indent=2,
-            default=str,
-        ),
-    )
-
-
-def build_baseline_ref():
-    if not BASELINE_S3_BUCKET:
+# Chuyển một giá trị ô Timestream thành giá trị Python thông thường.
+# Timestream có thể trả về dạng scalar, array, row và time-series, nên hàm hỗ trợ
+# này chuẩn hóa dữ liệu trước khi payload được gửi đến AI Engine.
+def _parse_timestream_value(value: dict):
+    if value.get("NullValue"):
         return None
+    if "ScalarValue" in value:
+        return value["ScalarValue"]
+    if "TimeSeriesValue" in value:
+        return [
+            {
+                "time": item["Time"],
+                "value": _parse_timestream_value(item["Value"]),
+            }
+            for item in value["TimeSeriesValue"]
+        ]
+    if "ArrayValue" in value:
+        return [_parse_timestream_value(item) for item in value["ArrayValue"]]
+    if "RowValue" in value:
+        return _parse_timestream_row(value["RowValue"])
+    return None
 
+# Chuyển một dòng Timestream thành dictionary với khóa là tên cột.
+# Điều này giúp mã phía sau không phụ thuộc vào cấu trúc phản hồi lồng nhau của Timestream.
+def _parse_timestream_row(row: dict) -> dict:
     return {
-        "bucket": BASELINE_S3_BUCKET,
-        "expected_prefixes": ["baselines/", "models/"],
+        column["Name"]: _parse_timestream_value(value)
+        for column, value in zip(row["ColumnInfo"], row["Data"])
     }
 
+# Truy vấn cửa sổ metrics trượt từ Amazon Timestream.
+# Đây là phía đọc của luồng nạp dữ liệu Kinesis -> Firehose -> Transformer -> Timestream
+# được thể hiện trong sơ đồ kiến trúc.
+def query_timestream_metrics() -> dict:
+    """Truy vấn dữ liệu metrics trong khoảng thời gian gần nhất từ Amazon Timestream."""
+    load_config()
+    query = f'''
+        SELECT
+          time,
+          service_id,
+          tenant_id,
+          metric_type,
+          measure_name,
+          measure_value::double AS value
+        FROM "{TIMESTREAM_DATABASE_NAME}"."{TIMESTREAM_TABLE_NAME}"
+        WHERE time >= ago({TIMESTREAM_QUERY_WINDOW})
+        ORDER BY time DESC
+    '''
 
-def build_audit_key(run_id):
-    now = dt.datetime.now(dt.timezone.utc)
-    prefix = AUDIT_S3_PREFIX.strip("/")
-    digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:12]
-    return f"{prefix}/{now:%Y/%m/%d}/{run_id}-{digest}.json"
+    logger.info(
+        "Querying Timestream table %s.%s with window %s",
+        TIMESTREAM_DATABASE_NAME,
+        TIMESTREAM_TABLE_NAME,
+        TIMESTREAM_QUERY_WINDOW,
+    )
 
+    try:
+        response = timestream_query_client.query(QueryString=query)
+        rows = [
+            _parse_timestream_row({
+                "ColumnInfo": response["ColumnInfo"],
+                "Data": row["Data"],
+            })
+            for row in response.get("Rows", [])
+        ]
+        logger.info("Successfully queried %d rows from Timestream.", len(rows))
+        return {
+            "source": "timestream",
+            "database": TIMESTREAM_DATABASE_NAME,
+            "table": TIMESTREAM_TABLE_NAME,
+            "window": TIMESTREAM_QUERY_WINDOW,
+            "rows": rows,
+        }
+    except Exception as e:
+        logger.error(f"Error querying Timestream: {e}")
+        raise
 
-def count_metric_samples(metric_window):
-    count = 0
-    for item in metric_window:
-        for series in item.get("result", []):
-            count += len(series.get("values", []))
-    return count
+# Gửi payload metrics Timestream đã chuẩn hóa đến API /v1/predict của AI Engine.
+# Timeout được cấu hình nên thấp hơn timeout của Lambda để lỗi được trả về có thể dự đoán,
+# thay vì treo cho đến khi Lambda bị kết thúc.
+def invoke_ai_engine(metrics_data: dict) -> dict:
+    """Gửi dữ liệu metrics đến AI Engine để nhận dự báo."""
+    load_config()
+    logger.info(f"Invoking AI Engine at: {AI_ENGINE_PREDICT_URL}")
+    
+    try:
+        response = requests.post(
+            AI_ENGINE_PREDICT_URL,
+            json=metrics_data, # Gửi dữ liệu dưới dạng JSON
+            timeout=AI_ENGINE_TIMEOUT_SECONDS, # Đặt thời gian chờ để tránh Lambda bị treo
+            # auth=aws_auth # Bỏ comment dòng này nếu ALB của bạn được bảo vệ bằng IAM
+        )
+        response.raise_for_status()  # Ném HTTPError nếu phản hồi lỗi (4xx hoặc 5xx)
+        logger.info(f"AI Engine responded with status: {response.status_code}")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to invoke AI Engine: {e}")
+        raise
 
-
-def parse_duration_seconds(value):
-    unit = value[-1]
-    amount = int(value[:-1])
-    multipliers = {
-        "s": 1,
-        "m": 60,
-        "h": 3600,
-        "d": 86400,
+# Lưu input và phản hồi AI thành một object audit trong S3.
+# Lỗi audit chỉ được ghi log và không raise vì lỗi quan sát không nên chặn
+# luồng inference chính sau khi dự báo đã hoàn tất.
+def write_audit_log(input_data: dict, output_data: dict):
+    """Ghi một bản ghi kiểm toán (audit record) vào S3."""
+    load_config()
+    timestamp = datetime.now(timezone.utc)
+    audit_record = {
+        "invocation_time_utc": timestamp.isoformat(),
+        "source": "window-feeder",
+        "input_to_ai_engine": input_data,
+        "response_from_ai_engine": output_data,
     }
-    if unit not in multipliers:
-        raise ValueError(f"Unsupported duration: {value}")
-    return amount * multipliers[unit]
+    
+    # Sử dụng timestamp trong tên file (key) để đảm bảo tính duy nhất.
+    s3_key = f"{AUDIT_S3_PREFIX.strip('/')}/{timestamp.strftime('%Y/%m/%d/%H-%M-%S-%f')}.json"
+    
+    logger.info(f"Writing audit log to s3://{AUDIT_S3_BUCKET}/{s3_key}")
+    try:
+        s3_client.put_object(
+            Bucket=AUDIT_S3_BUCKET,
+            Key=s3_key,
+            Body=json.dumps(audit_record, indent=2),
+            ContentType="application/json"
+        )
+    except Exception as e:
+        logger.error(f"Failed to write audit log to S3: {e}")
+        # Không raise lỗi ở đây, vì việc ghi audit thất bại không nên làm dừng luồng xử lý chính.
+
+# Chỉ phát cảnh báo drift khi phản hồi AI đánh dấu rõ ràng drift_detected.
+# SNS topic sẽ phân phối cảnh báo đến các kênh thông báo như Slack hoặc quy trình on-call.
+def publish_drift_alert(ai_response: dict):
+    """Gửi cảnh báo độ lệch (drift) tới SNS nếu AI Engine phát hiện."""
+    load_config()
+    if ai_response.get("drift_detected", False): # Kiểm tra có 'drift_detected' trong phản hồi của AI
+        message = {
+            "default": json.dumps(ai_response, indent=2),
+            "subject": f"Drift Detected in {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'window-feeder')}",
+            "message": f"AI Engine detected a drift. Details: \n{json.dumps(ai_response, indent=2)}"
+        }
+        logger.warning(f"Drift detected. Publishing alert to {DRIFT_ALERT_SNS_TOPIC_ARN}")
+        try:
+            sns_client.publish(
+                TopicArn=DRIFT_ALERT_SNS_TOPIC_ARN,
+                Message=json.dumps({'default': json.dumps(message)}),
+                MessageStructure='json'
+            )
+        except Exception as e:
+            logger.error(f"Failed to publish SNS alert: {e}")
 
 
-def utc_now():
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+# =================================================================
+# Handler chính của Lambda
+# =================================================================
 
+# Điểm vào của Lambda, được EventBridge gọi theo lịch đã cấu hình.
+# Hàm này điều phối toàn bộ workflow window-feeder: kiểm tra cờ điều khiển,
+# truy vấn metrics, dự báo AI, ghi audit và cảnh báo drift nếu cần.
+def handler(event, context):
+    """
+    Hàm xử lý chính của Lambda (entry point).
+    Điều phối toàn bộ quy trình: Kiểm tra Cổng -> Truy vấn -> Dự báo -> Ghi Audit -> Cảnh báo.
+    """
+    load_config()
+    logger.info(f"Handler started. Event: {json.dumps(event)}")
 
-def response(status_code, body):
-    return {
-        "statusCode": status_code,
-        "body": json.dumps(body, default=str),
-    }
+    # Bước 1: Kiểm tra "cổng" điều khiển hoạt động
+    if not is_inference_enabled():
+        logger.warning("Inference is disabled via SSM parameter. Exiting.")
+        return {"statusCode": 200, "body": "Inference disabled."}
+
+    try:
+        # Bước 2: Truy vấn dữ liệu chuỗi thời gian
+        metrics_data = query_timestream_metrics()
+        if not metrics_data.get("rows"):
+            logger.warning("No metrics data returned from Timestream. Exiting.")
+            return {"statusCode": 200, "body": "No metrics data."}
+
+        # Bước 3: Gọi đến AI Engine để dự báo
+        ai_response = invoke_ai_engine(metrics_data)
+
+        # Bước 4: Ghi lại nhật ký kiểm toán (luôn thực hiện, dù dự báo thành công hay không)
+        write_audit_log(input_data=metrics_data, output_data=ai_response)
+
+        # Bước 5: Xử lý và gửi cảnh báo nếu có độ lệch
+        publish_drift_alert(ai_response)
+
+        logger.info("Handler finished successfully.")
+        return {"statusCode": 200, "body": json.dumps(ai_response)}
+
+    except Exception as e:
+        # Xử lý mọi lỗi không mong muốn xảy ra trong quá trình thực thi
+        logger.critical(f"An unhandled error occurred in the handler: {e}", exc_info=True)
+        # Tùy chọn: bạn có thể gửi một cảnh báo lỗi tới SNS tại đây.
+        # Raise lại exception để AWS Lambda biết rằng lần thực thi này đã thất bại.
+        raise
