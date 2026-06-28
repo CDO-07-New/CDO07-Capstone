@@ -71,22 +71,22 @@ resource "aws_iam_policy" "task" {
     Statement = [
       # S3: Read baselines
       {
-        Sid    = "ListBaselineBucket"
-        Effect = "Allow"
-        Action = ["s3:ListBucket"]
+        Sid      = "ListBaselineBucket"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
         Resource = [var.baseline_s3_bucket_arn]
       },
       {
-        Sid    = "ReadBaselines"
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
+        Sid      = "ReadBaselines"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
         Resource = ["${var.baseline_s3_bucket_arn}/baselines/*"]
       },
       # S3: Write audit logs (03_security_design §5.2)
       {
-        Sid    = "WriteAuditLogs"
-        Effect = "Allow"
-        Action = ["s3:PutObject"]
+        Sid      = "WriteAuditLogs"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
         Resource = ["${var.audit_s3_bucket_arn}/ai-engine/*"]
       },
       # CloudWatch: Custom metrics (02_infra_design §6)

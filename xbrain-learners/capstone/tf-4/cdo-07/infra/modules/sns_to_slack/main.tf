@@ -18,6 +18,11 @@ data "aws_caller_identity" "current" {}
 locals {
   sns_topic_name = var.sns_topic_name != null ? var.sns_topic_name : "${var.project}-${var.environment}-slack-alerts"
   lambda_name    = var.lambda_function_name != null ? var.lambda_function_name : "${var.project}-${var.environment}-sns-to-slack"
+  common_tags = merge(var.tags, {
+    Environment = var.environment
+    Project     = var.project
+    ManagedBy   = "Terraform"
+  })
 }
 
 # 1. Package the Lambda Python script
@@ -33,12 +38,9 @@ resource "aws_sns_topic" "alerts" {
   name              = local.sns_topic_name
   kms_master_key_id = "alias/aws/sns"
 
-  tags = {
-    Name        = local.sns_topic_name
-    Environment = var.environment
-    Project     = var.project
-    ManagedBy   = "Terraform"
-  }
+  tags = merge(local.common_tags, {
+    Name = local.sns_topic_name
+  })
 }
 
 # 3. IAM Execution Role for Lambda
@@ -58,11 +60,7 @@ resource "aws_iam_role" "lambda" {
     ]
   })
 
-  tags = {
-    Environment = var.environment
-    Project     = var.project
-    ManagedBy   = "Terraform"
-  }
+  tags = local.common_tags
 }
 
 # Attach basic execution policy for CloudWatch Logging
@@ -125,12 +123,9 @@ resource "aws_lambda_function" "sns_to_slack" {
     }
   }
 
-  tags = {
-    Name        = local.lambda_name
-    Environment = var.environment
-    Project     = var.project
-    ManagedBy   = "Terraform"
-  }
+  tags = merge(local.common_tags, {
+    Name = local.lambda_name
+  })
 }
 
 # 5. CloudWatch Log Group for Lambda
@@ -138,11 +133,7 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
   name              = "/aws/lambda/${local.lambda_name}"
   retention_in_days = 7
 
-  tags = {
-    Environment = var.environment
-    Project     = var.project
-    ManagedBy   = "Terraform"
-  }
+  tags = local.common_tags
 }
 
 # 6. Lambda permissions to allow SNS invocation

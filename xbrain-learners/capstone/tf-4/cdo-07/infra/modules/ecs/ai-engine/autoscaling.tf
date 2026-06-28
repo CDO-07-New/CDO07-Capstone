@@ -10,8 +10,8 @@
 # =============================================================================
 
 resource "aws_appautoscaling_target" "ai_engine" {
-  max_capacity       = 4   # Contract: max 4
-  min_capacity       = 2   # Contract: min 2
+  max_capacity       = 4 # Contract: max 4
+  min_capacity       = 2 # Contract: min 2
   resource_id        = "service/${local.cluster_name}/foresight-lens-engine"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"

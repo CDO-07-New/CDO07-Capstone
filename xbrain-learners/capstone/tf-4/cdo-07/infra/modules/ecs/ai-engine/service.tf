@@ -118,12 +118,12 @@ resource "aws_lb_target_group" "ai_engine" {
   target_type = "ip"
 
   health_check {
-    path                = "/health"   # Contract §Health check
+    path                = "/health" # Contract §Health check
     matcher             = "200"
-    interval            = 30          # Contract: 30 seconds
+    interval            = 30 # Contract: 30 seconds
     timeout             = 5
-    healthy_threshold   = 2           # Contract: 2 consecutive 200
-    unhealthy_threshold = 3           # Contract: 3 consecutive non-200
+    healthy_threshold   = 2 # Contract: 2 consecutive 200
+    unhealthy_threshold = 3 # Contract: 3 consecutive non-200
   }
 
   tags = var.tags

@@ -7,6 +7,10 @@ on:
         description: Full Git SHA/image tag that has passed staging
         required: true
         type: string
+      ai_image_uri:
+        description: Immutable AI image URI that passed staging, e.g. ECR repo@sha256:digest
+        required: true
+        type: string
       confirm:
         description: Type DEPLOY_PROD to confirm production deployment
         required: true
@@ -25,7 +29,7 @@ env:
   AWS_REGION: us-east-1
   ENVIRONMENT: prod
   PROJECT_DIR: xbrain-learners/capstone/tf-4/cdo-07
-  SERVICES: ingest-service ingest-worker ai-serving
+  CDO_SERVICES: ingest-service ingest-worker
 
 jobs:
   deploy:
@@ -45,6 +49,11 @@ jobs:
 
           if [[ ! "${{ inputs.git_sha }}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error title=Invalid Git SHA::Use the full 40-character Git SHA that passed staging."
+            exit 1
+          fi
+
+          if [[ "${{ inputs.ai_image_uri }}" != *@sha256:* ]]; then
+            echo "::error title=Invalid AI image URI::Use the immutable image URI that passed staging, e.g. repo@sha256:digest."
             exit 1
           fi
 
@@ -105,7 +114,7 @@ jobs:
           manifest="${RUNNER_TEMP}/prod-image-manifest.json"
           echo '{}' > "$manifest"
 
-          for service in ${SERVICES}; do
+          for service in ${CDO_SERVICES}; do
             repository="tf4-cdo07-${service}"
             digest="$(aws ecr describe-images \
               --repository-name "$repository" \
@@ -123,6 +132,10 @@ jobs:
               '. + {($service): $image}' "$manifest" > "${manifest}.tmp"
             mv "${manifest}.tmp" "$manifest"
           done
+
+          jq --arg image "${{ inputs.ai_image_uri }}" \
+            '. + {"ai-serving": $image}' "$manifest" > "${manifest}.tmp"
+          mv "${manifest}.tmp" "$manifest"
 
           echo "manifest_path=${manifest}" >> "$GITHUB_OUTPUT"
           {
@@ -165,6 +178,12 @@ jobs:
 
       - name: Deploy ai-serving blue/green
         shell: bash
+        env:
+          ECS_SERVICE_NAME: foresight-lens-engine
+          CONTAINER_NAME: foresight-lens
+          CONTAINER_PORT: '8080'
+          CODEDEPLOY_APP: tf4-cdo07-${{ env.ENVIRONMENT }}-foresight-lens-engine
+          CODEDEPLOY_GROUP: tf4-cdo07-${{ env.ENVIRONMENT }}-foresight-lens-engine
         run: |
           set -euo pipefail
           "${PROJECT_DIR}/scripts/deploy-codedeploy-bluegreen.sh" \
