@@ -176,12 +176,12 @@ module "window_feeder" {
 module "fail_open_fallback" {
   source = "../../modules/lambda/fail-open-fallback"
 
-  project                          = local.project
-  environment                      = local.environment
-  window_feeder_failure_sns_arn    = module.sns_to_slack.sns_topic_arn
-  alert_sns_topic_arn              = module.sns_to_slack.sns_topic_arn
-  audit_s3_bucket_name             = module.audit_s3.audit_bucket_name
-  audit_s3_bucket_arn              = module.audit_s3.audit_bucket_arn
-  kms_key_arn                      = local.kms_key_arn
-  tags                             = local.common_tags
+  project                       = local.project
+  environment                   = local.environment
+  window_feeder_failure_sns_arn = module.sns_to_slack.sns_topic_arn
+  alert_sns_topic_arn           = module.sns_to_slack.sns_topic_arn
+  audit_s3_bucket_name          = module.audit_s3.audit_bucket_name
+  audit_s3_bucket_arn           = module.audit_s3.audit_bucket_arn
+  kms_key_arn                   = local.kms_key_arn
+  tags                          = local.common_tags
 }

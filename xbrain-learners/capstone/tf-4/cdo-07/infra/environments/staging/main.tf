@@ -115,12 +115,12 @@ module "mock_services" {
 module "ai_engine" {
   source = "../../modules/ecs/ai-engine"
 
-  environment           = local.environment
-  vpc_id                = module.networking.vpc_id
-  private_subnet_ids    = module.networking.private_subnets
-  alb_security_group_id = module.networking.alb_security_group_id
-  alb_http_listener_arn = module.networking.alb_http_listener_arn
-  alb_arn_suffix        = module.networking.alb_arn_suffix
+  environment            = local.environment
+  vpc_id                 = module.networking.vpc_id
+  private_subnet_ids     = module.networking.private_subnets
+  alb_security_group_id  = module.networking.alb_security_group_id
+  alb_http_listener_arn  = module.networking.alb_http_listener_arn
+  alb_arn_suffix         = module.networking.alb_arn_suffix
   baseline_s3_bucket     = module.s3_baseline.bucket_name
   baseline_s3_bucket_arn = module.s3_baseline.bucket_arn
   audit_s3_bucket        = module.audit_s3.audit_bucket_name
@@ -195,9 +195,9 @@ module "window_feeder" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "WriteLambdaLogs"
-        Effect = "Allow"
-        Action = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Sid      = "WriteLambdaLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "arn:aws:logs:${local.aws_region}:*:log-group:/aws/lambda/${local.project}-${local.environment}-window-feeder:*"
       },
       {
@@ -207,9 +207,9 @@ module "window_feeder" {
         Resource = ["*"]
       },
       {
-        Sid    = "QueryTimestreamSelect"
-        Effect = "Allow"
-        Action = ["timestream:Select"]
+        Sid      = "QueryTimestreamSelect"
+        Effect   = "Allow"
+        Action   = ["timestream:Select"]
         Resource = ["arn:aws:timestream:${local.aws_region}:*:database/${local.project}-${local.environment}/table/service-metrics"]
       },
       {
@@ -246,9 +246,9 @@ module "window_feeder" {
         Resource = "*"
       },
       {
-        Sid    = "KMSDecrypt"
-        Effect = "Allow"
-        Action = ["kms:Decrypt", "kms:DescribeKey"]
+        Sid      = "KMSDecrypt"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey"]
         Resource = [local.kms_key_arn]
       }
     ]
