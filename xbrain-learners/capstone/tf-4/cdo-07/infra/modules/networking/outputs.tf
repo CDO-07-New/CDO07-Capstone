@@ -32,3 +32,8 @@ output "alb_security_group_id" {
   description = "The ID of the ALB security group"
   value       = module.alb.security_group_id
 }
+
+output "alb_arn_suffix" {
+  description = "The ARN suffix of the ALB — required for ALBRequestCountPerTarget autoscaling metric"
+  value       = module.alb.arn_suffix
+}
