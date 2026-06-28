@@ -10,6 +10,8 @@ Infra hiện **chưa sẵn sàng để chạy lại toàn bộ hệ thống end-
 
 Repo đã có một số Terraform module nền tảng, nhưng runtime environment vẫn còn lỗi validate và thiếu nhiều thành phần so với deployment design.
 
+Kết quả kiểm tra lại mới nhất vẫn giữ nguyên kết luận: infra hiện mới ở mức **partial foundation**, chưa khớp đầy đủ với kiến trúc runtime trong tài liệu.
+
 ## Các bước đã kiểm tra
 
 - Tạo nhánh `codex/check-infra-readiness` từ `develop`.
@@ -24,13 +26,55 @@ Repo đã có một số Terraform module nền tảng, nhưng runtime environme
   - `terraform -chdir=xbrain-learners/capstone/tf-4/cdo-07/infra fmt -check -recursive`
 - Chạy unit test cho Lambda window-feeder:
   - `python3 -m pytest -q xbrain-learners/capstone/tf-4/cdo-07/infra/lambda/window-feeder/test_app.py`
+- Chạy lại kiểm tra bằng bản copy tạm ở `/tmp/codex-infra-rerun` để tránh làm bẩn lockfile hoặc `.terraform` trong repo thật.
+- Đối chiếu Terraform resources hiện có với:
+  - `docs/02_infra_design.md`
+  - `docs/04_deployment_design.md`
 
 ## Phần đã đạt
 
 - `infra/bootstrap` Terraform validate pass.
-- `infra` root Terraform validate pass sau khi chạy writable init, nhưng lockfile cần được cập nhật provider dependency để init readonly có thể lặp lại ổn định.
+- `infra` root Terraform validate pass khi chạy trong bản copy tạm.
 - Unit test Lambda window-feeder pass:
   - `7 passed`
+- Repo thật không bị làm bẩn trong lần kiểm tra lại; chỉ còn file staged có sẵn từ trước:
+  - `scripts/pre-push-ci.sh`
+
+## Đối chiếu với kiến trúc
+
+Kiến trúc trong `02_infra_design.md` và `04_deployment_design.md` mô tả runtime flow chính:
+
+```text
+Kinesis Data Streams
+→ ECS Fargate Ingestor
+→ Timestream for InfluxDB
+→ ECS Predictor/Orchestrator
+→ AI Engine
+→ Grafana/alerts/audit
+```
+
+Trạng thái hiện tại:
+
+| Thành phần kiến trúc | Trạng thái trong Terraform hiện tại | Ghi chú |
+|---|---|---|
+| VPC, subnet, security groups | Có một phần | Có module `networking`, ALB, VPC endpoints, SG cho Lambda/VPC endpoint |
+| Application Load Balancer | Có | Có ALB module và listener rules cho AI/mock services |
+| Kinesis Data Streams | Có | Có `aws_kinesis_stream` trong module `streaming` |
+| Kinesis Firehose | Thiếu | Tài liệu có nhắc Stream Delivery nhưng không thấy resource Firehose |
+| Timestream for InfluxDB | Thiếu | `modules/data` hiện chỉ tạo S3 audit bucket, chưa tạo DB/table |
+| S3 baseline/audit | Có | Có `s3_baseline` và audit bucket trong `modules/data` |
+| ECS AI Engine | Có một phần | Có ECS service module, nhưng image default vẫn là placeholder nginx |
+| ECS mock services | Có một phần | Có payment/ledger/fraud services, nhưng image default vẫn là placeholder nginx |
+| ECS Ingestor | Thiếu/chưa rõ | Deployment design có `ingestor`, nhưng không thấy module/source tương ứng |
+| ECS Predictor/Orchestrator | Thiếu/chưa đúng design | Hiện có Lambda window-feeder; chưa thấy scheduled ECS task/orchestrator theo design |
+| Lambda transformer | Có một phần | Có Lambda đọc Kinesis và IAM Timestream, nhưng Timestream chưa được provision |
+| Window feeder | Có một phần | Code và test có, nhưng deployment zip chưa tồn tại |
+| Fail-open fallback | Có | Có module Lambda fallback và alarm |
+| Cost circuit breaker | Có | Có Budget, SNS, Lambda, SSM inference flag |
+| Managed Grafana | Thiếu | Chỉ có biến/API annotation trong fallback, chưa có workspace Terraform |
+| CodeDeploy blue/green | Thiếu | Script deploy gọi CodeDeploy, nhưng chưa có app/deployment group Terraform |
+| ECR repositories | Có trong bootstrap | Bootstrap tạo ECR repo cho service images |
+| Service source/Dockerfile | Thiếu | Không có thư mục `services/` |
 
 ## Các blocker chính
 
@@ -91,6 +135,7 @@ Kết quả kiểm tra hiện tại:
 - `modules/data` hiện chỉ provision S3 audit bucket, chưa provision Timestream/InfluxDB database.
 - Chưa thấy Terraform resource cho Timestream/InfluxDB, Managed Grafana, CodeDeploy deployment group hoặc Firehose.
 - Một số Lambda có reference tới Timestream name và IAM permission, nhưng database/table chưa được tạo bằng Terraform.
+- Deployment script `deploy-codedeploy-bluegreen.sh` có gọi CodeDeploy, nhưng Terraform chưa tạo CodeDeploy app/deployment group tương ứng.
 
 ### 4. Thiếu source code service để deploy
 
@@ -147,12 +192,14 @@ Thứ tự xử lý đề xuất:
 
 1. Fix mismatch interface của module `sns_to_slack`.
 2. Chạy `terraform fmt -recursive`.
-3. Refresh và commit Terraform lockfiles một cách chủ động.
-4. Bổ sung hoặc wire các runtime infrastructure còn thiếu:
+3. Chạy lại `terraform init -backend=false` và `terraform validate` cho `sandbox`, `staging`, `prod`.
+4. Refresh và commit Terraform lockfiles một cách chủ động nếu provider dependency thay đổi.
+5. Bổ sung hoặc wire các runtime infrastructure còn thiếu:
    - Timestream/InfluxDB
    - Grafana
    - CodeDeploy
    - Firehose nếu vẫn nằm trong target architecture
-5. Thêm source directories cho services hoặc truyền ECR image thật cho ECS services.
-6. Thêm build step để tạo `window-feeder.zip` trước khi chạy Terraform plan/apply.
-7. Chạy lại Terraform validate và plan cho `sandbox` hoặc `staging`.
+   - ECS ingestor/orchestrator nếu vẫn là kiến trúc đích
+6. Thêm source directories cho services hoặc truyền ECR image thật cho ECS services.
+7. Thêm build step để tạo `window-feeder.zip` trước khi chạy Terraform plan/apply.
+8. Chạy lại Terraform plan cho `sandbox` hoặc `staging`.
