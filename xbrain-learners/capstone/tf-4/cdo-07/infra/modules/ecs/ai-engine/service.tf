@@ -94,7 +94,17 @@ module "ai_engine_service" {
     }
   }
 
+  # Deployment circuit breaker: auto-rollback on failed deployments (04_deployment_design §4.2)
+  deployment_circuit_breaker = {
+    enable   = true
+    rollback = true
+  }
+
   tags = var.tags
+
+  # GitOps: task_definition is managed by CI/CD pipeline (04_deployment_design §3),
+  # not by Terraform after initial creation.
+  ignore_task_definition_changes = true
 }
 
 # =============================================================================

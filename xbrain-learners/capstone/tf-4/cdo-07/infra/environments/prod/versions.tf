@@ -21,8 +21,3 @@ terraform {
     use_lockfile = true
   }
 }
-
-provider "aws" {
-  region     = local.aws_region
-  retry_mode = "adaptive"
-}

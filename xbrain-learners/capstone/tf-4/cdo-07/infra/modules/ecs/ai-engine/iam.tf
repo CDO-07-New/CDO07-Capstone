@@ -61,33 +61,57 @@ resource "aws_iam_role" "task" {
   tags = var.tags
 }
 
-# S3 access — read baselines (least-privilege)
-resource "aws_iam_policy" "task_s3" {
-  name        = "${var.environment}-foresight-lens-s3-policy"
-  description = "Allow AI Engine to read baselines from S3"
+# S3 + CloudWatch + KMS access — 03_security_design §2.1 tf4-cdo07-ai-engine-task-role
+resource "aws_iam_policy" "task" {
+  name        = "${var.environment}-foresight-lens-task-policy"
+  description = "AI Engine runtime: S3 read/write, CloudWatch metrics, KMS decrypt"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # S3: Read baselines
       {
         Sid    = "ListBaselineBucket"
         Effect = "Allow"
         Action = ["s3:ListBucket"]
-        Resource = var.baseline_s3_bucket_arn
+        Resource = [var.baseline_s3_bucket_arn]
       },
       {
         Sid    = "ReadBaselines"
         Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = ["${var.baseline_s3_bucket_arn}/baselines/*"]
+      },
+      # S3: Write audit logs (03_security_design §5.2)
+      {
+        Sid    = "WriteAuditLogs"
+        Effect = "Allow"
+        Action = ["s3:PutObject"]
+        Resource = ["${var.audit_s3_bucket_arn}/ai-engine/*"]
+      },
+      # CloudWatch: Custom metrics (02_infra_design §6)
+      {
+        Sid      = "PublishCustomMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = ["*"]
+      },
+      # KMS: Decrypt baseline data + encrypt audit data
+      {
+        Sid    = "KMSOperations"
+        Effect = "Allow"
         Action = [
-          "s3:GetObject",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey",
         ]
-        Resource = "${var.baseline_s3_bucket_arn}/baselines/*"
+        Resource = [var.kms_key_arn]
       }
     ]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "task_s3" {
+resource "aws_iam_role_policy_attachment" "task" {
   role       = aws_iam_role.task.name
-  policy_arn = aws_iam_policy.task_s3.arn
+  policy_arn = aws_iam_policy.task.arn
 }

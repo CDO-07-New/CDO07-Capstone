@@ -57,6 +57,21 @@ variable "baseline_s3_bucket_arn" {
   type        = string
 }
 
+variable "audit_s3_bucket_arn" {
+  description = "ARN of the S3 audit log bucket for IAM policy scoping."
+  type        = string
+}
+
+variable "audit_s3_bucket" {
+  description = "Name of the S3 audit log bucket. Maps to AUDIT_S3_BUCKET env var."
+  type        = string
+}
+
+variable "kms_key_arn" {
+  description = "ARN of the KMS CMK for encrypting/decrypting data in S3 and Timestream."
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

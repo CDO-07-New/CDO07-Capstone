@@ -37,3 +37,15 @@ output "alb_arn_suffix" {
   description = "The ARN suffix of the ALB — required for ALBRequestCountPerTarget autoscaling metric"
   value       = module.alb.arn_suffix
 }
+
+# --- Security Groups ---
+
+output "lambda_security_group_id" {
+  description = "Security group ID for Lambda functions — use for VPC-attached Lambdas"
+  value       = aws_security_group.lambda.id
+}
+
+output "vpce_security_group_id" {
+  description = "Security group ID for VPC Interface Endpoints"
+  value       = aws_security_group.vpce.id
+}
