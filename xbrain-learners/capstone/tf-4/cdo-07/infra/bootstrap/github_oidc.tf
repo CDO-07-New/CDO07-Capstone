@@ -61,7 +61,8 @@ data "aws_iam_policy_document" "github_oidc_deploy_assume_role" {
       variable = "token.actions.githubusercontent.com:sub"
       values = concat(
         local.github_subjects,
-        local.github_environment_subjects
+        local.github_environment_subjects,
+        var.github_deploy_extra_subjects
       )
     }
   }

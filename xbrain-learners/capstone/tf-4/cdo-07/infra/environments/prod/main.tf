@@ -1,0 +1,204 @@
+###############################################################################
+# CDO-07 · Task Force 4 · Production Environment
+###############################################################################
+
+# --- Layer 1: Cost Governance ---
+module "cost_circuit_breaker" {
+  source = "../../modules/cost-circuit-breaker"
+
+  project                   = local.project
+  environment               = local.environment
+  aws_region                = local.aws_region
+  monthly_budget_limit_usd  = 200
+  warning_threshold_percent = 80
+  hard_threshold_percent    = 100
+  ssm_parameter_name        = "/${local.project}/${local.environment}/inference_enabled"
+  warning_email_addresses   = []
+  lambda_timeout_seconds    = 10
+  log_retention_days        = 30
+  kms_key_arn               = local.kms_key_arn
+  alert_sns_topic_arn       = module.sns_to_slack.sns_topic_arn
+  tags                      = local.common_tags
+}
+
+# --- Layer 2: Networking ---
+module "networking" {
+  source = "../../modules/networking"
+
+  vpc_name              = "cdo-07-prod-vpc"
+  vpc_cidr              = "10.2.0.0/16"
+  private_subnet_cidr_a = "10.2.1.0/24"
+  private_subnet_cidr_b = "10.2.2.0/24"
+  enable_vpc_endpoints  = true
+
+  tags = local.common_tags
+}
+
+# --- Layer 2.5: SNS → Slack ---
+module "sns_to_slack" {
+  source = "../../modules/sns_to_slack"
+
+  project     = local.project
+  environment = local.environment
+
+  # Production: Use SSM Parameter Store for webhook URL
+  slack_webhook_parameter_name = "/${local.project}/${local.environment}/slack-webhook-url"
+  kms_key_arn                  = local.kms_key_arn # required to decrypt SecureString SSM param
+
+  tags = local.common_tags
+}
+
+# --- Layer 3a: Storage ---
+module "s3_baseline" {
+  source = "../../modules/s3_baseline"
+
+  environment = local.environment
+  tags        = local.common_tags
+}
+
+module "audit_s3" {
+  source = "../../modules/data"
+
+  project     = local.project
+  environment = local.environment
+  kms_key_arn = local.kms_key_arn
+
+  # Timestream InfluxDB — production: same instance type, larger storage
+  influxdb_subnet_ids             = module.networking.private_subnets
+  influxdb_vpc_security_group_ids = [module.networking.influxdb_security_group_id]
+  influxdb_db_instance_type       = "db.influx.medium"
+  influxdb_allocated_storage      = 100 # 100GB for prod (design doc specifies 300GB at scale)
+  influxdb_bucket                 = "service-metrics"
+  influxdb_org                    = "cdo-07"
+
+  tags = local.common_tags
+}
+
+# --- Layer 3b: Streaming ---
+module "streaming" {
+  source = "../../modules/streaming"
+
+  project     = local.project
+  environment = local.environment
+  kms_key_arn = local.kms_key_arn
+  tags        = local.common_tags
+}
+
+# --- Layer 3c: Mock Services ---
+module "mock_services" {
+  source = "../../modules/ecs/mock-services"
+
+  environment           = local.environment
+  vpc_id                = module.networking.vpc_id
+  private_subnet_ids    = module.networking.private_subnets
+  alb_security_group_id = module.networking.alb_security_group_id
+  alb_http_listener_arn = module.networking.alb_http_listener_arn
+  aws_region            = local.aws_region
+  kinesis_stream_arn    = module.streaming.stream_arn
+  kinesis_stream_name   = module.streaming.stream_name
+  kms_key_arn           = local.kms_key_arn
+  tags                  = local.common_tags
+}
+
+# --- Layer 3d: AI Engine ---
+module "ai_engine" {
+  source = "../../modules/ecs/ai-engine"
+
+  environment            = local.environment
+  vpc_id                 = module.networking.vpc_id
+  private_subnet_ids     = module.networking.private_subnets
+  alb_security_group_id  = module.networking.alb_security_group_id
+  alb_http_listener_arn  = module.networking.alb_http_listener_arn
+  alb_arn_suffix         = module.networking.alb_arn_suffix
+  baseline_s3_bucket     = module.s3_baseline.bucket_name
+  baseline_s3_bucket_arn = module.s3_baseline.bucket_arn
+  audit_s3_bucket        = module.audit_s3.audit_bucket_name
+  audit_s3_bucket_arn    = module.audit_s3.audit_bucket_arn
+  kms_key_arn            = local.kms_key_arn
+  tags                   = local.common_tags
+}
+
+# --- Layer 4a: Lambda Transformer ---
+module "transformer" {
+  source = "../../modules/lambda/transformer"
+
+  project            = local.project
+  environment        = local.environment
+  kinesis_stream_arn = module.streaming.stream_arn
+  kms_key_arn        = local.kms_key_arn
+
+  # InfluxDB connection — replaces Timestream LiveAnalytics (ADR-002 update)
+  influxdb_url        = module.audit_s3.influxdb_endpoint_url
+  influxdb_secret_arn = module.audit_s3.influxdb_secret_arn
+  influxdb_bucket     = module.audit_s3.influxdb_bucket
+  influxdb_org        = module.audit_s3.influxdb_org
+
+  subnet_ids         = module.networking.private_subnets
+  security_group_ids = [module.networking.lambda_security_group_id]
+  tags               = local.common_tags
+}
+
+# --- Layer 4b: Window Feeder ---
+module "window_feeder" {
+  source = "../../modules/lambda-scheduled-function"
+
+  function_name        = "${local.project}-${local.environment}-window-feeder"
+  function_description = "Queries Timestream, feeds AI Engine, writes audit, emits drift alerts."
+  package_path         = "${path.module}/../../lambda/window-feeder/build/window-feeder.zip"
+  handler              = "app.handler"
+  runtime              = "python3.12"
+  timeout_seconds      = 30
+  memory_mb            = 256
+  reserved_concurrency = 1
+  subnet_ids           = module.networking.private_subnets
+  security_group_ids   = [module.networking.lambda_security_group_id]
+  schedule_expression  = "rate(5 minutes)"
+  schedule_enabled     = true
+  event_payload        = { source = "eventbridge", window = "2h", predict_path = "/v1/predict" }
+
+  environment_variables = {
+    # InfluxDB connection (replaces Timestream LiveAnalytics)
+    INFLUXDB_URL                     = module.audit_s3.influxdb_endpoint_url
+    INFLUXDB_BUCKET                  = module.audit_s3.influxdb_bucket
+    INFLUXDB_ORG                     = module.audit_s3.influxdb_org
+    INFLUXDB_SECRET_ARN              = module.audit_s3.influxdb_secret_arn
+    INFLUXDB_QUERY_WINDOW            = "2h"
+    AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
+    AI_ENGINE_TIMEOUT_SECONDS        = "5"
+    BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
+    AUDIT_S3_BUCKET                  = module.audit_s3.audit_bucket_name
+    AUDIT_S3_PREFIX                  = "window-feeder/"
+    INFERENCE_ENABLED_PARAMETER_NAME = "/${local.project}/${local.environment}/inference_enabled"
+    DRIFT_ALERT_SNS_TOPIC_ARN        = module.sns_to_slack.sns_topic_arn
+  }
+
+  iam_policy_document_json = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Sid = "WriteLambdaLogs", Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "arn:aws:logs:${local.aws_region}:*:log-group:/aws/lambda/${local.project}-${local.environment}-window-feeder:*" },
+      { Sid = "ReadInfluxDBToken", Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [module.audit_s3.influxdb_secret_arn] },
+      { Sid = "ReadInferenceGate", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:${local.aws_region}:*:parameter/${local.project}/${local.environment}/inference_enabled" },
+      { Sid = "ReadBaselines", Effect = "Allow", Action = ["s3:GetObject", "s3:ListBucket"], Resource = [module.s3_baseline.bucket_arn, "${module.s3_baseline.bucket_arn}/*"] },
+      { Sid = "WriteAuditObjects", Effect = "Allow", Action = ["s3:PutObject"], Resource = "${module.audit_s3.audit_bucket_arn}/window-feeder/*" },
+      { Sid = "PublishDriftAlerts", Effect = "Allow", Action = ["sns:Publish"], Resource = module.sns_to_slack.sns_topic_arn },
+      { Sid = "ManageVpcENIs", Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface", "ec2:DescribeNetworkInterfaces"], Resource = "*" },
+      { Sid = "KMSDecrypt", Effect = "Allow", Action = ["kms:Decrypt", "kms:DescribeKey"], Resource = [local.kms_key_arn] },
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+# --- Layer 4c: Fail-Open Fallback ---
+module "fail_open_fallback" {
+  source = "../../modules/lambda/fail-open-fallback"
+
+  project                       = local.project
+  environment                   = local.environment
+  window_feeder_failure_sns_arn = module.sns_to_slack.sns_topic_arn
+  alert_sns_topic_arn           = module.sns_to_slack.sns_topic_arn
+  audit_s3_bucket_name          = module.audit_s3.audit_bucket_name
+  audit_s3_bucket_arn           = module.audit_s3.audit_bucket_arn
+  kms_key_arn                   = local.kms_key_arn
+  tags                          = local.common_tags
+}
