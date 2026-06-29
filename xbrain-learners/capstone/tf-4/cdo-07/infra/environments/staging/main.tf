@@ -50,8 +50,14 @@ module "sns_to_slack" {
   project     = local.project
   environment = local.environment
 
-  # For staging, use direct webhook URL (SSM-based is preferred for prod)
-  slack_webhook_url = "https://hooks.slack.com/services/PLACEHOLDER"
+  # Use SSM Parameter Store for webhook URL — consistent with prod pattern.
+  # Create the parameter once before apply:
+  #   aws ssm put-parameter \
+  #     --name /tf4-cdo07/staging/slack-webhook-url \
+  #     --type SecureString --value "https://hooks.slack.com/services/..." \
+  #     --key-id alias/tf4-cdo07-bootstrap
+  slack_webhook_parameter_name = "/${local.project}/${local.environment}/slack-webhook-url"
+  kms_key_arn                  = local.kms_key_arn
 
   tags = local.common_tags
 }
@@ -73,6 +79,14 @@ module "audit_s3" {
   project     = local.project
   environment = local.environment
   kms_key_arn = local.kms_key_arn
+
+  # Timestream InfluxDB instance — VPC-only, private subnets
+  influxdb_subnet_ids             = module.networking.private_subnets
+  influxdb_vpc_security_group_ids = [module.networking.influxdb_security_group_id]
+  influxdb_db_instance_type       = "db.influx.medium"
+  influxdb_allocated_storage      = 20
+  influxdb_bucket                 = "service-metrics"
+  influxdb_org                    = "cdo-07"
 
   tags = local.common_tags
 }
@@ -131,7 +145,7 @@ module "ai_engine" {
 }
 
 # =============================================================================
-# Layer 4a — Lambda Transformer (Kinesis → Timestream)
+# Layer 4a — Lambda Transformer (Kinesis → Timestream InfluxDB)
 # =============================================================================
 module "transformer" {
   source = "../../modules/lambda/transformer"
@@ -141,10 +155,11 @@ module "transformer" {
   kinesis_stream_arn = module.streaming.stream_arn
   kms_key_arn        = local.kms_key_arn
 
-  # Timestream is not yet provisioned in Terraform.
-  # These values will need to be updated when the Timestream module is created.
-  timestream_database_name = "${local.project}-${local.environment}"
-  timestream_table_name    = "service-metrics"
+  # InfluxDB connection — replaces Timestream LiveAnalytics (ADR-002 update)
+  influxdb_url        = module.audit_s3.influxdb_endpoint_url
+  influxdb_secret_arn = module.audit_s3.influxdb_secret_arn
+  influxdb_bucket     = module.audit_s3.influxdb_bucket
+  influxdb_org        = module.audit_s3.influxdb_org
 
   subnet_ids         = module.networking.private_subnets
   security_group_ids = [module.networking.lambda_security_group_id]
@@ -179,11 +194,12 @@ module "window_feeder" {
   }
 
   environment_variables = {
-    TIMESTREAM_DATABASE_NAME         = "${local.project}-${local.environment}"
-    TIMESTREAM_TABLE_NAME            = "service-metrics"
-    TIMESTREAM_QUERY_WINDOW          = "2h"
-    METRIC_WINDOW_STEP_SECONDS       = "300"
-    FORWARD_FILL_LOOKBACK_SECONDS    = "900"
+    # InfluxDB connection (replaces Timestream LiveAnalytics)
+    INFLUXDB_URL                     = module.audit_s3.influxdb_endpoint_url
+    INFLUXDB_BUCKET                  = module.audit_s3.influxdb_bucket
+    INFLUXDB_ORG                     = module.audit_s3.influxdb_org
+    INFLUXDB_SECRET_ARN              = module.audit_s3.influxdb_secret_arn
+    INFLUXDB_QUERY_WINDOW            = "2h"
     AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
     BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
@@ -203,16 +219,10 @@ module "window_feeder" {
         Resource = "arn:aws:logs:${local.aws_region}:*:log-group:/aws/lambda/${local.project}-${local.environment}-window-feeder:*"
       },
       {
-        Sid      = "QueryTimestreamDescribe"
+        Sid      = "ReadInfluxDBToken"
         Effect   = "Allow"
-        Action   = ["timestream:DescribeEndpoints"]
-        Resource = ["*"]
-      },
-      {
-        Sid      = "QueryTimestreamSelect"
-        Effect   = "Allow"
-        Action   = ["timestream:Select"]
-        Resource = ["arn:aws:timestream:${local.aws_region}:*:database/${local.project}-${local.environment}/table/service-metrics"]
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [module.audit_s3.influxdb_secret_arn]
       },
       {
         Sid      = "ReadInferenceGate"

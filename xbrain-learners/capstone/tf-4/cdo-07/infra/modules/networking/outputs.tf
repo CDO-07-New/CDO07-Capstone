@@ -49,3 +49,8 @@ output "vpce_security_group_id" {
   description = "Security group ID for VPC Interface Endpoints"
   value       = aws_security_group.vpce.id
 }
+
+output "influxdb_security_group_id" {
+  description = "Security group ID for Timestream InfluxDB instance — attach to db instance via module.data"
+  value       = aws_security_group.influxdb.id
+}

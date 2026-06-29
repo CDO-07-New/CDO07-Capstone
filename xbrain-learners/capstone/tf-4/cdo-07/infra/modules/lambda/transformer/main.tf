@@ -1,11 +1,13 @@
 ###############################################################################
-# Lambda Transformer — CDO-07 Kinesis → Timestream Bridge
+# Lambda Transformer — CDO-07 Kinesis → Timestream InfluxDB Bridge
 #
-# Design ref: 02_infra_design §2 "Functions", 03_security_design §2.1
+# Design ref: 02_infra_design §2 "Functions", 03_security_design §2.1, ADR-002
 #
 # Reads raw telemetry from Kinesis Data Streams, validates schema,
 # drops PII fields (03_security_design §1.4 PII Firewall), and writes
-# clean records to Amazon Timestream for InfluxDB.
+# clean records to Amazon Timestream for InfluxDB via HTTP Line Protocol.
+#
+# Auth: reads InfluxDB operator token from Secrets Manager at runtime.
 ###############################################################################
 
 terraform {
@@ -45,7 +47,7 @@ data "archive_file" "lambda_zip" {
 # ---------------------------------------------------------------------------
 resource "aws_iam_role" "transformer" {
   name        = "${local.function_name}-role"
-  description = "Execution role for Lambda Transformer — CDO-07 TF4"
+  description = "Execution role for Lambda Transformer - CDO-07 TF4"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -90,15 +92,15 @@ resource "aws_iam_policy" "transformer" {
         ]
         Resource = [var.kinesis_stream_arn]
       },
-      # Timestream: Write validated records
+      # Secrets Manager: Read InfluxDB operator token (replaces Timestream LiveAnalytics auth)
+      # Token ARN is set by Timestream InfluxDB provisioning (aws_timestreaminfluxdb_db_instance)
       {
-        Sid    = "AllowTimestreamWrite"
+        Sid    = "AllowInfluxDBTokenRead"
         Effect = "Allow"
         Action = [
-          "timestream:WriteRecords",
-          "timestream:DescribeEndpoints",
+          "secretsmanager:GetSecretValue",
         ]
-        Resource = ["*"] # DescribeEndpoints requires "*"
+        Resource = [var.influxdb_secret_arn]
       },
       # KMS: Decrypt Kinesis records encrypted at rest
       {
@@ -161,9 +163,11 @@ resource "aws_lambda_function" "transformer" {
 
   environment {
     variables = {
-      LOG_LEVEL                = var.log_level
-      TIMESTREAM_DATABASE_NAME = var.timestream_database_name
-      TIMESTREAM_TABLE_NAME    = var.timestream_table_name
+      LOG_LEVEL           = var.log_level
+      INFLUXDB_URL        = var.influxdb_url
+      INFLUXDB_BUCKET     = var.influxdb_bucket
+      INFLUXDB_ORG        = var.influxdb_org
+      INFLUXDB_SECRET_ARN = var.influxdb_secret_arn
     }
   }
 

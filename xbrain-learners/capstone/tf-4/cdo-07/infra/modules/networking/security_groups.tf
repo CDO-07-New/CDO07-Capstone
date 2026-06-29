@@ -58,3 +58,52 @@ resource "aws_vpc_security_group_ingress_rule" "vpce_from_lambda" {
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.lambda.id
 }
+
+# NOTE: Lambda egress to VPCE (port 443) is already covered by
+# aws_vpc_security_group_egress_rule.lambda_to_vpce above.
+# Secrets Manager uses the same VPCE SG — no extra rule needed.
+
+# ---------------------------------------------------------------------------
+# InfluxDB Security Group (tf4-cdo07-influxdb-sg)
+# Design ref: 03_security_design §1.3 — Timestream (TS) VPC endpoint
+#
+# Timestream for InfluxDB listens on port 8086 (HTTP/HTTPS).
+# Only Lambda SG is allowed inbound — ECS tasks access via same route.
+# ---------------------------------------------------------------------------
+resource "aws_security_group" "influxdb" {
+  name        = "${var.vpc_name}-influxdb-sg"
+  description = "Security group for Timestream InfluxDB instance. Inbound 8086 from Lambda and ECS only."
+  vpc_id      = module.vpc.vpc_id
+
+  tags = merge(var.tags, {
+    Name = "${var.vpc_name}-influxdb-sg"
+  })
+}
+
+resource "aws_vpc_security_group_ingress_rule" "influxdb_from_lambda" {
+  security_group_id            = aws_security_group.influxdb.id
+  description                  = "InfluxDB HTTP from Lambda functions"
+  from_port                    = 8086
+  to_port                      = 8086
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.lambda.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "influxdb_from_alb" {
+  security_group_id            = aws_security_group.influxdb.id
+  description                  = "InfluxDB HTTP from ALB / ECS app SG (AI Engine, Mock Services)"
+  from_port                    = 8086
+  to_port                      = 8086
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = module.alb.security_group_id
+}
+
+# Lambda egress to InfluxDB port 8086
+resource "aws_vpc_security_group_egress_rule" "lambda_to_influxdb" {
+  security_group_id            = aws_security_group.lambda.id
+  description                  = "InfluxDB HTTP to Timestream InfluxDB instance"
+  from_port                    = 8086
+  to_port                      = 8086
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.influxdb.id
+}

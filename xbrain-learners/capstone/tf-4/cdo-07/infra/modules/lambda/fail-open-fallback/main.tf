@@ -28,7 +28,7 @@ data "archive_file" "lambda_zip" {
 # ---------------------------------------------------------------------------
 resource "aws_iam_role" "fallback" {
   name        = "${local.function_name}-role"
-  description = "Execution role for Fail-Open Fallback Lambda — CDO-07 TF4"
+  description = "Execution role for Fail-Open Fallback Lambda - CDO-07 TF4"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -140,7 +140,7 @@ resource "aws_lambda_function" "fallback" {
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   role             = aws_iam_role.fallback.arn
   handler          = "fallback_handler.handler"
-  runtime          = "python3.11"
+  runtime          = "python3.12"
   timeout          = 30
 
   environment {

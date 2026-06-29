@@ -43,6 +43,7 @@ module "sns_to_slack" {
 
   # Production: Use SSM Parameter Store for webhook URL
   slack_webhook_parameter_name = "/${local.project}/${local.environment}/slack-webhook-url"
+  kms_key_arn                  = local.kms_key_arn # required to decrypt SecureString SSM param
 
   tags = local.common_tags
 }
@@ -61,7 +62,16 @@ module "audit_s3" {
   project     = local.project
   environment = local.environment
   kms_key_arn = local.kms_key_arn
-  tags        = local.common_tags
+
+  # Timestream InfluxDB — production: same instance type, larger storage
+  influxdb_subnet_ids             = module.networking.private_subnets
+  influxdb_vpc_security_group_ids = [module.networking.influxdb_security_group_id]
+  influxdb_db_instance_type       = "db.influx.medium"
+  influxdb_allocated_storage      = 100 # 100GB for prod (design doc specifies 300GB at scale)
+  influxdb_bucket                 = "service-metrics"
+  influxdb_org                    = "cdo-07"
+
+  tags = local.common_tags
 }
 
 # --- Layer 3b: Streaming ---
@@ -112,15 +122,20 @@ module "ai_engine" {
 module "transformer" {
   source = "../../modules/lambda/transformer"
 
-  project                  = local.project
-  environment              = local.environment
-  kinesis_stream_arn       = module.streaming.stream_arn
-  kms_key_arn              = local.kms_key_arn
-  timestream_database_name = "${local.project}-${local.environment}"
-  timestream_table_name    = "service-metrics"
-  subnet_ids               = module.networking.private_subnets
-  security_group_ids       = [module.networking.lambda_security_group_id]
-  tags                     = local.common_tags
+  project            = local.project
+  environment        = local.environment
+  kinesis_stream_arn = module.streaming.stream_arn
+  kms_key_arn        = local.kms_key_arn
+
+  # InfluxDB connection — replaces Timestream LiveAnalytics (ADR-002 update)
+  influxdb_url        = module.audit_s3.influxdb_endpoint_url
+  influxdb_secret_arn = module.audit_s3.influxdb_secret_arn
+  influxdb_bucket     = module.audit_s3.influxdb_bucket
+  influxdb_org        = module.audit_s3.influxdb_org
+
+  subnet_ids         = module.networking.private_subnets
+  security_group_ids = [module.networking.lambda_security_group_id]
+  tags               = local.common_tags
 }
 
 # --- Layer 4b: Window Feeder ---
@@ -142,11 +157,12 @@ module "window_feeder" {
   event_payload        = { source = "eventbridge", window = "2h", predict_path = "/v1/predict" }
 
   environment_variables = {
-    TIMESTREAM_DATABASE_NAME         = "${local.project}-${local.environment}"
-    TIMESTREAM_TABLE_NAME            = "service-metrics"
-    TIMESTREAM_QUERY_WINDOW          = "2h"
-    METRIC_WINDOW_STEP_SECONDS       = "300"
-    FORWARD_FILL_LOOKBACK_SECONDS    = "900"
+    # InfluxDB connection (replaces Timestream LiveAnalytics)
+    INFLUXDB_URL                     = module.audit_s3.influxdb_endpoint_url
+    INFLUXDB_BUCKET                  = module.audit_s3.influxdb_bucket
+    INFLUXDB_ORG                     = module.audit_s3.influxdb_org
+    INFLUXDB_SECRET_ARN              = module.audit_s3.influxdb_secret_arn
+    INFLUXDB_QUERY_WINDOW            = "2h"
     AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
     BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
@@ -160,8 +176,7 @@ module "window_feeder" {
     Version = "2012-10-17"
     Statement = [
       { Sid = "WriteLambdaLogs", Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "arn:aws:logs:${local.aws_region}:*:log-group:/aws/lambda/${local.project}-${local.environment}-window-feeder:*" },
-      { Sid = "QueryTimestreamDescribe", Effect = "Allow", Action = ["timestream:DescribeEndpoints"], Resource = ["*"] },
-      { Sid = "QueryTimestreamSelect", Effect = "Allow", Action = ["timestream:Select"], Resource = ["arn:aws:timestream:${local.aws_region}:*:database/${local.project}-${local.environment}/table/service-metrics"] },
+      { Sid = "ReadInfluxDBToken", Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [module.audit_s3.influxdb_secret_arn] },
       { Sid = "ReadInferenceGate", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:${local.aws_region}:*:parameter/${local.project}/${local.environment}/inference_enabled" },
       { Sid = "ReadBaselines", Effect = "Allow", Action = ["s3:GetObject", "s3:ListBucket"], Resource = [module.s3_baseline.bucket_arn, "${module.s3_baseline.bucket_arn}/*"] },
       { Sid = "WriteAuditObjects", Effect = "Allow", Action = ["s3:PutObject"], Resource = "${module.audit_s3.audit_bucket_arn}/window-feeder/*" },

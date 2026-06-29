@@ -19,14 +19,48 @@ variable "kms_key_arn" {
   type        = string
 }
 
-variable "timestream_database_name" {
-  description = "Amazon Timestream database name for writing validated records."
+# ---------------------------------------------------------------------------
+# InfluxDB connection variables (replaces Timestream LiveAnalytics vars)
+# ---------------------------------------------------------------------------
+
+variable "influxdb_url" {
+  description = "Full HTTPS URL for Timestream InfluxDB instance, e.g. https://<host>:8086"
   type        = string
 }
 
-variable "timestream_table_name" {
-  description = "Amazon Timestream table name for writing validated records."
+variable "influxdb_secret_arn" {
+  description = "Secrets Manager ARN containing InfluxDB operator token (key: operator_token)."
   type        = string
+}
+
+variable "influxdb_bucket" {
+  description = "InfluxDB bucket name to write records into (service-metrics)."
+  type        = string
+  default     = "service-metrics"
+}
+
+variable "influxdb_org" {
+  description = "InfluxDB organization name."
+  type        = string
+  default     = "cdo-07"
+}
+
+# ---------------------------------------------------------------------------
+# Legacy variables kept for backward-compatibility — no longer used in code
+# but may be referenced by existing environment main.tf calls.
+# Will be removed in a future cleanup pass.
+# ---------------------------------------------------------------------------
+
+variable "timestream_database_name" {
+  description = "DEPRECATED — was Timestream LiveAnalytics DB name. Kept for tf compat. Use influxdb_bucket."
+  type        = string
+  default     = ""
+}
+
+variable "timestream_table_name" {
+  description = "DEPRECATED — was Timestream LiveAnalytics table name. Kept for tf compat. Use influxdb_bucket."
+  type        = string
+  default     = ""
 }
 
 variable "subnet_ids" {
