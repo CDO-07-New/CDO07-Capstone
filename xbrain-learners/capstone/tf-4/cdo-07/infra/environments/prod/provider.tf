@@ -1,31 +1,8 @@
 provider "aws" {
-  region = "us-east-1"
+  region     = local.aws_region
+  retry_mode = "adaptive"
 
   default_tags {
-    tags = {
-      Environment = "Prod"
-      Team        = "CDO-07"
-      Project     = "Foresight Lens"
-      ManagedBy   = "Terraform"
-    }
-  }
-}
-
-terraform {
-  required_version = ">= 1.10, < 2.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-
-  backend "s3" {
-    bucket       = "tf4-cdo07-tf-state-201023212626-use1"
-    key          = "tf4-cdo07/prod/terraform.tfstate"
-    region       = "us-east-1"
-    encrypt      = true
-    use_lockfile = true
+    tags = local.common_tags
   }
 }

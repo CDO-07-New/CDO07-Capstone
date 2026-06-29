@@ -39,3 +39,9 @@ variable "lambda_function_name" {
   type        = string
   default     = null
 }
+
+variable "tags" {
+  description = "Additional tags to apply to SNS, Lambda, IAM, and log resources."
+  type        = map(string)
+  default     = {}
+}

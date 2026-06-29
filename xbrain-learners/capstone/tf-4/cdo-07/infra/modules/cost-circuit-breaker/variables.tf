@@ -54,6 +54,18 @@ variable "warning_email_addresses" {
   default     = []
 }
 
+variable "kms_key_arn" {
+  description = "ARN of the KMS CMK for encrypting SSM SecureString parameter. Required per 03_security_design §3.1."
+  type        = string
+  default     = ""
+}
+
+variable "alert_sns_topic_arn" {
+  description = "ARN of the SNS alert topic. Lambda publishes here when the circuit breaker trips."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Common tags to apply to taggable resources."
   type        = map(string)

@@ -10,7 +10,8 @@ data "archive_file" "lambda_zip" {
 resource "aws_ssm_parameter" "inference_enabled" {
   name        = var.ssm_parameter_name
   description = "Soft circuit breaker flag read by the Window Feeder before AI inference."
-  type        = "String"
+  type        = "SecureString" # 03_security_design §3.1: SecureString with KMS CMK
+  key_id      = var.kms_key_arn
   value       = "true"
 
   tags = local.common_tags
@@ -113,6 +114,38 @@ data "aws_iam_policy_document" "lambda" {
     ]
 
     resources = ["*"]
+  }
+
+  # KMS: Required for SecureString SSM parameter (03_security_design §3.1)
+  dynamic "statement" {
+    for_each = var.kms_key_arn != "" ? [1] : []
+
+    content {
+      sid    = "AllowKMSForSSM"
+      effect = "Allow"
+
+      actions = [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey",
+      ]
+
+      resources = [var.kms_key_arn]
+    }
+  }
+
+  # SNS: Notify alert topic when circuit breaker trips
+  dynamic "statement" {
+    for_each = var.alert_sns_topic_arn != "" ? [1] : []
+
+    content {
+      sid    = "AllowSNSPublishAlert"
+      effect = "Allow"
+
+      actions = ["sns:Publish"]
+
+      resources = [var.alert_sns_topic_arn]
+    }
   }
 }
 
