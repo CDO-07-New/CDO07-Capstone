@@ -46,6 +46,14 @@ variable "github_allowed_environments" {
   default     = ["staging", "prod"]
 }
 
+variable "github_deploy_extra_subjects" {
+  description = "Additional GitHub OIDC subjects allowed to assume the deploy role, for external image publisher repos."
+  type        = list(string)
+  default = [
+    "repo:CDO-07/TF4-AIO-03-foresight-lens-final:ref:refs/heads/chore/cleanup-secrets",
+  ]
+}
+
 variable "terraform_state_prefix" {
   description = "S3 key prefix used by Terraform state files."
   type        = string
