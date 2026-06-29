@@ -19,6 +19,12 @@ variable "monthly_budget_limit_usd" {
   default     = 200
 }
 
+variable "daily_spend_cap_usd" {
+  description = "Maximum estimated daily AWS spend before the circuit breaker fires. Defaults to monthly cap / 30."
+  type        = number
+  default     = null
+}
+
 variable "warning_threshold_percent" {
   description = "Budget warning threshold as a percentage of the monthly limit."
   type        = number
@@ -55,7 +61,7 @@ variable "warning_email_addresses" {
 }
 
 variable "kms_key_arn" {
-  description = "ARN of the KMS CMK for encrypting SSM SecureString parameter. Required per 03_security_design §3.1."
+  description = "ARN or alias ARN of the KMS CMK for encrypting SSM SecureString parameter and Lambda logs."
   type        = string
   default     = ""
 }
@@ -64,6 +70,18 @@ variable "alert_sns_topic_arn" {
   description = "ARN of the SNS alert topic. Lambda publishes here when the circuit breaker trips."
   type        = string
   default     = ""
+}
+
+variable "subnet_ids" {
+  description = "Private subnet IDs for VPC-attached Lambda. Leave empty for public Lambda."
+  type        = list(string)
+  default     = []
+}
+
+variable "security_group_ids" {
+  description = "Security group IDs for VPC-attached Lambda."
+  type        = list(string)
+  default     = []
 }
 
 variable "tags" {

@@ -3,6 +3,16 @@ output "cost_circuit_breaker_budget_name" {
   value       = module.cost_circuit_breaker.budget_name
 }
 
+output "cost_circuit_breaker_daily_spend_cap_alarm" {
+  description = "CloudWatch alarm enforcing the daily spend cap guardrail."
+  value       = module.cost_circuit_breaker.daily_spend_cap_alarm_name
+}
+
+output "cost_circuit_breaker_daily_spend_cap_usd" {
+  description = "Daily spend cap in USD (monthly cap / 30, rounded up)."
+  value       = module.cost_circuit_breaker.daily_spend_cap_usd
+}
+
 output "cost_circuit_breaker_lambda_name" {
   description = "Lambda function that disables inference at the hard budget threshold."
   value       = module.cost_circuit_breaker.lambda_function_name

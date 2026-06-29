@@ -18,6 +18,8 @@ module "cost_circuit_breaker" {
   log_retention_days        = 30
   kms_key_arn               = local.kms_key_arn
   alert_sns_topic_arn       = module.sns_to_slack.sns_topic_arn
+  subnet_ids                = module.networking.private_subnets
+  security_group_ids        = [module.networking.lambda_security_group_id]
   tags                      = local.common_tags
 }
 

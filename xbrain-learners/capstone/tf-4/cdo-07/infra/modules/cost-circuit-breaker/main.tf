@@ -1,6 +1,15 @@
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
+data "aws_kms_key" "encryption" {
+  count  = var.kms_key_arn != "" ? 1 : 0
+  key_id = var.kms_key_arn
+}
+
+locals {
+  kms_key_arn = var.kms_key_arn != "" ? data.aws_kms_key.encryption[0].arn : null
+}
+
 data "archive_file" "lambda_zip" {
   type        = "zip"
   source_file = "${path.module}/lambda/cost_circuit_breaker.py"
@@ -10,8 +19,8 @@ data "archive_file" "lambda_zip" {
 resource "aws_ssm_parameter" "inference_enabled" {
   name        = var.ssm_parameter_name
   description = "Soft circuit breaker flag read by the Window Feeder before AI inference."
-  type        = "SecureString" # 03_security_design §3.1: SecureString with KMS CMK
-  key_id      = var.kms_key_arn
+  type        = "SecureString"
+  key_id      = local.kms_key_arn
   value       = "true"
 
   tags = local.common_tags
@@ -21,9 +30,11 @@ resource "aws_ssm_parameter" "inference_enabled" {
   }
 }
 
+# checkov:skip=CKV_AWS_338:30-day retention matches capstone cost guardrails; 1-year retention would inflate log spend.
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${local.lambda_name}"
   retention_in_days = var.log_retention_days
+  kms_key_id        = local.kms_key_arn
 
   tags = local.common_tags
 }
@@ -116,9 +127,8 @@ data "aws_iam_policy_document" "lambda" {
     resources = ["*"]
   }
 
-  # KMS: Required for SecureString SSM parameter (03_security_design §3.1)
   dynamic "statement" {
-    for_each = var.kms_key_arn != "" ? [1] : []
+    for_each = local.kms_key_arn != null ? [1] : []
 
     content {
       sid    = "AllowKMSForSSM"
@@ -128,13 +138,13 @@ data "aws_iam_policy_document" "lambda" {
         "kms:Decrypt",
         "kms:GenerateDataKey",
         "kms:DescribeKey",
+        "kms:Encrypt",
       ]
 
-      resources = [var.kms_key_arn]
+      resources = [local.kms_key_arn]
     }
   }
 
-  # SNS: Notify alert topic when circuit breaker trips
   dynamic "statement" {
     for_each = var.alert_sns_topic_arn != "" ? [1] : []
 
@@ -147,25 +157,53 @@ data "aws_iam_policy_document" "lambda" {
       resources = [var.alert_sns_topic_arn]
     }
   }
+
+  dynamic "statement" {
+    for_each = length(var.subnet_ids) > 0 ? [1] : []
+
+    content {
+      sid    = "ManageVpcNetworkInterfaces"
+      effect = "Allow"
+
+      actions = [
+        "ec2:CreateNetworkInterface",
+        "ec2:DeleteNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+      ]
+
+      resources = ["*"]
+    }
+  }
 }
 
-#checkov:skip=CKV_AWS_117:Networking module is not in scope yet; this public Lambda only calls regional AWS APIs.
-#checkov:skip=CKV_AWS_173:Environment variables contain only non-sensitive parameter names and literal flag values.
-#checkov:skip=CKV_AWS_272:Code signing is out of scope for the capstone circuit breaker Lambda.
+# checkov:skip=CKV_AWS_272:Code signing is out of scope for the capstone circuit breaker Lambda.
 resource "aws_lambda_function" "cost_circuit_breaker" {
-  function_name    = local.lambda_name
-  description      = "Disables AI inference when the AWS monthly cost budget reaches the hard threshold."
-  role             = aws_iam_role.lambda.arn
-  handler          = "cost_circuit_breaker.handler"
-  runtime          = "python3.12"
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  timeout          = var.lambda_timeout_seconds
+  function_name                  = local.lambda_name
+  description                    = "Disables AI inference when AWS cost guardrails breach."
+  role                           = aws_iam_role.lambda.arn
+  handler                        = "cost_circuit_breaker.handler"
+  runtime                        = "python3.12"
+  filename                       = data.archive_file.lambda_zip.output_path
+  source_code_hash               = data.archive_file.lambda_zip.output_base64sha256
+  timeout                        = var.lambda_timeout_seconds
+  reserved_concurrent_executions = 1
+  kms_key_arn                    = local.kms_key_arn
 
   environment {
     variables = {
-      DISABLED_VALUE     = "false"
-      SSM_PARAMETER_NAME = aws_ssm_parameter.inference_enabled.name
+      DISABLED_VALUE         = "false"
+      SSM_PARAMETER_NAME     = aws_ssm_parameter.inference_enabled.name
+      ALERT_SNS_TOPIC_ARN    = var.alert_sns_topic_arn
+      CIRCUIT_BREAKER_REASON = "cost_guardrail_breach"
+    }
+  }
+
+  dynamic "vpc_config" {
+    for_each = length(var.subnet_ids) > 0 ? [1] : []
+
+    content {
+      subnet_ids         = var.subnet_ids
+      security_group_ids = var.security_group_ids
     }
   }
 
@@ -185,15 +223,16 @@ resource "aws_lambda_function" "cost_circuit_breaker" {
   tags = local.common_tags
 }
 
-#checkov:skip=CKV_AWS_26:SNS topics use default SSE; custom CMK removed to keep apply resilient on local DNS.
 resource "aws_sns_topic" "budget_warning" {
-  name = "${local.name_prefix}-budget-warning"
+  name              = "${local.name_prefix}-budget-warning"
+  kms_master_key_id = "alias/aws/sns"
 
   tags = local.common_tags
 }
 
 resource "aws_sns_topic" "budget_hard_trigger" {
-  name = "${local.name_prefix}-budget-hard-trigger"
+  name              = "${local.name_prefix}-budget-hard-trigger"
+  kms_master_key_id = "alias/aws/sns"
 
   tags = local.common_tags
 }
@@ -326,6 +365,25 @@ data "aws_iam_policy_document" "budget_hard_trigger_topic" {
       values   = [data.aws_caller_identity.current.account_id]
     }
   }
+
+  statement {
+    sid    = "AllowCloudWatchAlarmsPublish"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.budget_hard_trigger.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceOwner"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
 }
 
 resource "aws_budgets_budget" "monthly_cost" {
@@ -350,4 +408,64 @@ resource "aws_budgets_budget" "monthly_cost" {
     notification_type         = "ACTUAL"
     subscriber_sns_topic_arns = [aws_sns_topic.budget_hard_trigger.arn]
   }
+}
+
+resource "aws_budgets_budget" "daily_cost" {
+  name         = "${local.name_prefix}-daily-cost"
+  budget_type  = "COST"
+  limit_amount = tostring(local.daily_spend_cap_usd)
+  limit_unit   = "USD"
+  time_unit    = "DAILY"
+
+  notification {
+    comparison_operator       = "GREATER_THAN"
+    threshold                 = 100
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "ACTUAL"
+    subscriber_sns_topic_arns = [aws_sns_topic.budget_hard_trigger.arn]
+  }
+}
+
+# Daily spend cap — CloudWatch alarm on estimated account charges (us-east-1 billing metric).
+# Pairs with the daily AWS Budget above; both publish to the hard-trigger SNS topic.
+resource "aws_cloudwatch_metric_alarm" "daily_spend_cap" {
+  alarm_name          = "${local.name_prefix}-daily-spend-cap"
+  alarm_description   = "Estimated AWS charges exceeded the daily spend cap (${local.daily_spend_cap_usd} USD). Invokes cost circuit breaker via SNS."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "EstimatedCharges"
+  namespace           = "AWS/Billing"
+  period              = 21600
+  statistic           = "Maximum"
+  threshold           = local.daily_spend_cap_usd
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    Currency = "USD"
+  }
+
+  alarm_actions = [aws_sns_topic.budget_hard_trigger.arn]
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "circuit_breaker_lambda_errors" {
+  alarm_name          = "${local.lambda_name}-errors"
+  alarm_description   = "Cost circuit breaker Lambda is failing — inference gate may not trip on budget breach."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.cost_circuit_breaker.function_name
+  }
+
+  alarm_actions = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+
+  tags = local.common_tags
 }
