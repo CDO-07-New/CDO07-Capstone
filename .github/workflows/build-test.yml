@@ -27,7 +27,6 @@ jobs:
         service:
           - ingest-service
           - ingest-worker
-          - ai-serving
 
     steps:
       - name: Checkout

@@ -1,0 +1,5 @@
+boto3
+requests
+# Note: InfluxDB write and query use urllib (stdlib) + HTTP API directly.
+# No influxdb-client-python package needed — reduces Lambda ZIP size and
+# avoids a dependency that requires a compiled extension on some platforms.
