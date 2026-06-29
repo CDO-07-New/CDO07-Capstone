@@ -10,7 +10,7 @@ module "cost_circuit_breaker" {
   environment               = local.environment
   aws_region                = local.aws_region
   monthly_budget_limit_usd  = 200
-  warning_threshold_percent = 80
+  warning_threshold_percents = [40, 60, 80]
   hard_threshold_percent    = 100
   ssm_parameter_name        = "/${local.project}/${local.environment}/inference_enabled"
   warning_email_addresses   = []

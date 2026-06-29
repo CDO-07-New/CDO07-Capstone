@@ -393,12 +393,16 @@ resource "aws_budgets_budget" "monthly_cost" {
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
-  notification {
-    comparison_operator       = "GREATER_THAN"
-    threshold                 = var.warning_threshold_percent
-    threshold_type            = "PERCENTAGE"
-    notification_type         = "ACTUAL"
-    subscriber_sns_topic_arns = [aws_sns_topic.budget_warning.arn]
+  dynamic "notification" {
+    for_each = toset([for p in var.warning_threshold_percents : tostring(p)])
+
+    content {
+      comparison_operator       = "GREATER_THAN"
+      threshold                 = tonumber(notification.key)
+      threshold_type            = "PERCENTAGE"
+      notification_type         = "ACTUAL"
+      subscriber_sns_topic_arns = [aws_sns_topic.budget_warning.arn]
+    }
   }
 
   notification {

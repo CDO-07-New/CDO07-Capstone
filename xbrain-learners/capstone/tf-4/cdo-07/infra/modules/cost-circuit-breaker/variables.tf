@@ -25,10 +25,17 @@ variable "daily_spend_cap_usd" {
   default     = null
 }
 
-variable "warning_threshold_percent" {
-  description = "Budget warning threshold as a percentage of the monthly limit."
-  type        = number
-  default     = 80
+variable "warning_threshold_percents" {
+  description = "Budget warning thresholds as percentages of the monthly limit. Notify only — does not trip the circuit breaker."
+  type        = list(number)
+  default     = [40, 60, 80]
+
+  validation {
+    condition = alltrue([
+      for p in var.warning_threshold_percents : p > 0 && p < 100
+    ])
+    error_message = "Each warning threshold must be between 1 and 99 percent."
+  }
 }
 
 variable "hard_threshold_percent" {
@@ -55,7 +62,7 @@ variable "log_retention_days" {
 }
 
 variable "warning_email_addresses" {
-  description = "Optional email subscribers for the 80 percent budget warning."
+  description = "Optional email subscribers for budget warning notifications."
   type        = list(string)
   default     = []
 }
