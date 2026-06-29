@@ -87,17 +87,33 @@ def _validate_env() -> None:
 # InfluxDB token
 # =================================================================
 def _get_influxdb_token() -> str:
+    """
+    Returns Authorization header value (e.g. 'Token <token>' or 'Basic <b64>').
+    Cached per warm instance.
+    """
     global _influxdb_token_cache
     if _influxdb_token_cache:
         return _influxdb_token_cache
     logger.info("Fetching InfluxDB token from Secrets Manager: %s", INFLUXDB_SECRET_ARN)
     resp   = _secretsmanager.get_secret_value(SecretId=INFLUXDB_SECRET_ARN)
     secret = json.loads(resp["SecretString"])
-    token  = secret.get("operator_token") or secret.get("token") or secret.get("password")
-    if not token:
-        raise RuntimeError(f"InfluxDB token not found. Available keys: {list(secret.keys())}")
-    _influxdb_token_cache = token
-    return token
+
+    operator_token = secret.get("operator_token") or secret.get("token")
+    if operator_token:
+        auth_header = f"Token {operator_token}"
+    else:
+        # Timestream InfluxDB READONLY secret only has username/password
+        username = secret.get("username", "admin")
+        password = secret.get("password", "")
+        if not password:
+            raise RuntimeError(f"InfluxDB credentials not found. Available keys: {list(secret.keys())}")
+        import base64 as _b64
+        b64creds = _b64.b64encode(f"{username}:{password}".encode()).decode()
+        auth_header = f"Basic {b64creds}"
+        logger.info("Using Basic auth for InfluxDB (no operator_token in secret)")
+
+    _influxdb_token_cache = auth_header
+    return auth_header
 
 
 # =================================================================
@@ -108,7 +124,7 @@ def is_inference_enabled() -> bool:
     if not INFERENCE_ENABLED_PARAMETER_NAME:
         return False
     try:
-        resp = _ssm.get_parameter(Name=INFERENCE_ENABLED_PARAMETER_NAME)
+        resp = _ssm.get_parameter(Name=INFERENCE_ENABLED_PARAMETER_NAME, WithDecryption=True)
         enabled = resp["Parameter"]["Value"].lower() == "true"
         logger.info("Inference gate: %s", enabled)
         return enabled
@@ -146,7 +162,7 @@ from(bucket: "{INFLUXDB_BUCKET}")
         data=flux_query.encode("utf-8"),
         method="POST",
         headers={
-            "Authorization": f"Token {token}",
+            "Authorization": token,
             "Content-Type":  "application/vnd.flux",
             "Accept":        "application/csv",
         },

@@ -31,6 +31,9 @@ module "ai_engine_service" {
 
   desired_count = 2 # Contract §Scaling: min replicas
 
+  # Disable built-in autoscaling — managed by autoscaling.tf (aws_appautoscaling_*)
+  enable_autoscaling = false
+
   # Use custom IAM roles (defined in iam.tf)
   create_task_exec_iam_role = false
   create_tasks_iam_role     = false
@@ -75,12 +78,20 @@ module "ai_engine_service" {
     }
   }
 
+  # ---------- Load Balancer ----------
+  # Required for ALBRequestCountPerTarget autoscaling metric (autoscaling.tf)
+  load_balancer = {
+    service = {
+      target_group_arn = aws_lb_target_group.ai_engine.arn
+      container_name   = "foresight-lens-engine"
+      container_port   = 8080
+    }
+  }
+
   # ---------- Networking ----------
   subnet_ids = var.private_subnet_ids
 
   security_group_rules = {
-    # Ingress: only from ALB on port 8080 (SG-to-SG reference)
-    # Contract §Networking: "chỉ allow từ CDO platforms trong cùng task force (SG-to-SG reference)"
     ingress_alb = {
       type                     = "ingress"
       from_port                = 8080
@@ -88,8 +99,6 @@ module "ai_engine_service" {
       protocol                 = "tcp"
       source_security_group_id = var.alb_security_group_id
     }
-    # Egress: AWS services via VPC endpoints (HTTPS 443)
-    # Contract §Networking: "egress tới AWS Services (CloudWatch, S3) thông qua VPC Endpoint"
     egress_all = {
       type        = "egress"
       from_port   = 0
@@ -99,7 +108,7 @@ module "ai_engine_service" {
     }
   }
 
-  # Deployment circuit breaker: auto-rollback on failed deployments (04_deployment_design §4.2)
+  # Deployment circuit breaker: auto-rollback on failed deployments
   deployment_circuit_breaker = {
     enable   = true
     rollback = true
@@ -107,9 +116,9 @@ module "ai_engine_service" {
 
   tags = var.tags
 
-  # GitOps: task_definition is managed by CI/CD pipeline (04_deployment_design §3),
-  # not by Terraform after initial creation.
   ignore_task_definition_changes = true
+
+  depends_on = [aws_lb_target_group.ai_engine]
 }
 
 # =============================================================================

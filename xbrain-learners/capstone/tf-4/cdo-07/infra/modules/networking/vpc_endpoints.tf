@@ -26,6 +26,9 @@ locals {
     kinesis_streams = {
       service = "kinesis-streams"
     }
+    secretsmanager = {
+      service = "secretsmanager"
+    }
   }
 }
 

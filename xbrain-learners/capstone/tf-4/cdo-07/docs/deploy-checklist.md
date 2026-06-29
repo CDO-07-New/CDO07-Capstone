@@ -41,10 +41,11 @@
 
 | # | Việc cần làm | Ghi chú |
 |---|---|---|
-| ⬜ | Tạo Incoming Webhook URL cho channel alerts | `https://hooks.slack.com/services/...` |
-| ⬜ | Test webhook: `curl -X POST -d '{"text":"test"}' <URL>` | |
-| ⬜ | Lưu URL — sẽ điền vào `slack_webhook_url` của sandbox/staging | |
-| ⬜ | **Prod**: upload URL lên SSM: `aws ssm put-parameter --name /tf4-cdo07/prod/slack-webhook-url --type SecureString --value "<URL>"` | Prod module đọc từ SSM |
+| ✅ | Tạo Incoming Webhook URL cho channel alerts | URLs đã có cho cả 3 environments |
+| ⬜ | Test webhook sandbox: `curl -X POST -H 'Content-type: application/json' -d '{"text":"test sandbox"}' <SLACK_WEBHOOK_SANDBOX>` | Lấy URL từ SSM `/tf4-cdo07/sandbox/slack-webhook-url` |
+| ⬜ | Test webhook staging: `curl -X POST -H 'Content-type: application/json' -d '{"text":"test staging"}' <SLACK_WEBHOOK_STAGING>` | Lấy URL từ SSM `/tf4-cdo07/staging/slack-webhook-url` |
+| ⬜ | Test webhook prod: `curl -X POST -H 'Content-type: application/json' -d '{"text":"test prod"}' <SLACK_WEBHOOK_PROD>` | Lấy URL từ SSM `/tf4-cdo07/prod/slack-webhook-url` |
+| ⬜ | **Tất cả 3 envs**: upload URL lên SSM (chạy `scripts/upload-slack-webhooks.ps1`) | Xem script bên dưới hoặc trong `infra/scripts/` |
 
 ---
 
@@ -187,37 +188,78 @@ Fallback handler tự đóng gói trong Terraform qua `archive_file` — không 
 
 ---
 
-## PHASE 3 — Timestream Database/Table (chưa có Terraform module)
+## PHASE 3 — Timestream InfluxDB (managed by Terraform — không cần CLI thủ công)
 
-> **GAP**: Không có Terraform resource nào tạo Timestream database/table trong codebase.
-> Lambda Transformer và Window Feeder đều expect `tf4-cdo07-<env>/service-metrics`.
+> **ĐÃ FIX**: Codebase đã migration từ Timestream for LiveAnalytics (bị blocked: `AccessDeniedException: Only existing Timestream for LiveAnalytics customers can access the service`) sang **Amazon Timestream for InfluxDB**.
+>
+> **Timestream for InfluxDB** được provisioned hoàn toàn bởi Terraform trong `modules/data/main.tf` thông qua resource `aws_timestreaminfluxdb_db_instance`.
+>
+> **KHÔNG cần chạy `aws timestream-write create-database` hay `aws timestream-write create-table` nữa.**
 
-### 3.1 Tạo thủ công (temporary) — hoặc tạo Terraform resource
+### 3.1 Những gì Terraform tự tạo
 
-**Option A — AWS CLI (nhanh để test):**
+| Resource | Tên | Ghi chú |
+|---|---|---|
+| `aws_timestreaminfluxdb_db_instance` | `tf4-cdo07-<env>-influxdb` | Single-AZ, `db.influx.medium`, VPC-private |
+| `aws_ssm_parameter` | `/<project>/<env>/influxdb-endpoint` | Full HTTPS URL cho Lambda |
+| `aws_ssm_parameter` | `/<project>/<env>/influxdb-secret-arn` | ARN của Secrets Manager entry chứa operator token |
+| `aws_ssm_parameter` | `/<project>/<env>/influxdb-bucket` | `service-metrics` |
+| `aws_ssm_parameter` | `/<project>/<env>/influxdb-org` | `cdo-07` |
+
+### 3.2 Auth flow
+
+AWS tự động tạo Secrets Manager entry khi tạo InfluxDB instance, chứa JSON:
+```json
+{ "operator_token": "<token>", "password": "<admin-password>" }
+```
+Lambda Transformer và Lambda Window Feeder đọc `operator_token` từ đó tại cold start.
+
+### 3.3 Verify sau `terraform apply`
 
 ```bash
-# Tạo database
-aws timestream-write create-database \
-  --database-name "tf4-cdo07-sandbox" \
-  --kms-key-id "alias/tf4-cdo07-bootstrap"
+# Kiểm tra instance tồn tại
+aws timestream-influxdb list-db-instances --region us-east-1
 
-# Tạo table với retention
-aws timestream-write create-table \
-  --database-name "tf4-cdo07-sandbox" \
-  --table-name "service-metrics" \
-  --retention-properties "MemoryStoreRetentionPeriodInHours=48,MagneticStoreRetentionPeriodInDays=90"
+# Kiểm tra SSM parameter endpoint
+aws ssm get-parameter --name /tf4-cdo07/sandbox/influxdb-endpoint
+
+# Kiểm tra Secrets Manager entry tồn tại (không đọc giá trị)
+aws ssm get-parameter --name /tf4-cdo07/sandbox/influxdb-secret-arn
 ```
 
-Lặp lại cho `tf4-cdo07-staging` và `tf4-cdo07-prod`.
-
-**Option B — Thêm resource vào Terraform module `data`** (recommended):
-
-| # | Việc cần làm | |
+| # | Kiểm tra | |
 |---|---|---|
-| ⬜ | Thêm `aws_timestreamwrite_database` và `aws_timestreamwrite_table` vào `modules/data/main.tf` | |
-| ⬜ | Export outputs: `timestream_database_name`, `timestream_table_name` | |
-| ⬜ | Update `environments/*/main.tf` nếu cần truyền thêm biến | |
+| ⬜ | InfluxDB instance status = `AVAILABLE` | `aws timestream-influxdb list-db-instances` |
+| ⬜ | SSM parameter `/tf4-cdo07/sandbox/influxdb-endpoint` tồn tại | |
+| ⬜ | SSM parameter `/tf4-cdo07/sandbox/influxdb-secret-arn` tồn tại | |
+| ⬜ | Lambda Transformer env vars chứa `INFLUXDB_URL`, `INFLUXDB_BUCKET`, `INFLUXDB_ORG`, `INFLUXDB_SECRET_ARN` | `aws lambda get-function-configuration --function-name tf4-cdo07-sandbox-transformer` |
+| ⬜ | Lambda Window Feeder env vars chứa `INFLUXDB_URL` (không còn `TIMESTREAM_*`) | `aws lambda get-function-configuration --function-name tf4-cdo07-sandbox-window-feeder` |
+
+### 3.4 Smoke test InfluxDB write/read
+
+```bash
+# Lấy endpoint và token
+INFLUX_ENDPOINT=$(aws ssm get-parameter --name /tf4-cdo07/sandbox/influxdb-endpoint --query Parameter.Value --output text)
+SECRET_ARN=$(aws ssm get-parameter --name /tf4-cdo07/sandbox/influxdb-secret-arn --query Parameter.Value --output text)
+INFLUX_TOKEN=$(aws secretsmanager get-secret-value --secret-id $SECRET_ARN --query SecretString --output text | python -c "import sys,json; print(json.load(sys.stdin)['operator_token'])")
+
+# Test write (Line Protocol)
+curl -s -o /dev/null -w "%{http_code}" \
+  -X POST "${INFLUX_ENDPOINT}/api/v2/write?org=cdo-07&bucket=service-metrics&precision=ns" \
+  -H "Authorization: Token ${INFLUX_TOKEN}" \
+  -H "Content-Type: text/plain" \
+  --data-raw 'cpu_usage_percent,service_id=payment-gateway,tenant_id=tnt-test value=45.2 '"$(date +%s%N)"
+# Mong đợi: HTTP 204
+
+# Test query (Flux)
+curl -s \
+  -X POST "${INFLUX_ENDPOINT}/api/v2/query?org=cdo-07" \
+  -H "Authorization: Token ${INFLUX_TOKEN}" \
+  -H "Content-Type: application/vnd.flux" \
+  -H "Accept: application/csv" \
+  --data-raw 'from(bucket:"service-metrics") |> range(start: -5m) |> limit(n:5)'
+# Mong đợi: CSV rows với data
+```
 
 
 ---
@@ -284,7 +326,7 @@ terraform apply sandbox.tfplan
 |---|---|---|---|
 | ⬜ | Gửi metric giả vào Kinesis | `aws kinesis put-record --stream-name tf4-cdo07-sandbox-ingest-stream --partition-key payment-gateway --data '{"service_id":"payment-gateway","metric_name":"cpu_usage","value":45.2,"timestamp":"2026-06-29T00:00:00Z"}'` | `ShardId` returned |
 | ⬜ | Lambda Transformer invoke | Chờ 60s rồi xem CloudWatch Logs `/aws/lambda/tf4-cdo07-sandbox-transformer` | Log `Processed X records` |
-| ⬜ | Query Timestream | `aws timestream-query query --query-string "SELECT * FROM \"tf4-cdo07-sandbox\".\"service-metrics\" LIMIT 5"` | Row data returned |
+| ⬜ | Query InfluxDB | Lấy endpoint + token từ SSM/Secrets Manager (xem Phase 3.4), chạy Flux query | Row data returned |
 | ⬜ | Invoke Window Feeder thủ công | `aws lambda invoke --function-name tf4-cdo07-sandbox-window-feeder --payload '{"source":"manual"}' /tmp/out.json` | `statusCode: 200` |
 | ⬜ | Audit log xuất hiện trong S3 | `aws s3 ls s3://<audit-bucket>/window-feeder/ --recursive` | `.json` file |
 | ⬜ | Invoke Fail-Open Fallback thủ công | `aws lambda invoke --function-name tf4-cdo07-sandbox-fail-open-fallback --payload '{}' /tmp/out.json` | `statusCode: 200` |
@@ -380,7 +422,7 @@ HOẶC: Actions → deploy-staging → Run workflow
 | ⬜ | Git SHA cần deploy đã có successful `deploy-staging` run | `gh run list --workflow deploy-staging.yml --status success` |
 | ⬜ | AI image URI đã có sha256 digest (`repo@sha256:...`) | |
 | ⬜ | `prod` environment reviewer đã approve | GitHub Environment protection |
-| ⬜ | Prod Slack webhook đã upload lên SSM `/tf4-cdo07/prod/slack-webhook-url` | |
+| ⬜ | Prod Slack webhook đã upload lên SSM `/tf4-cdo07/prod/slack-webhook-url` | ✅ URL đã có — chạy `scripts/upload-slack-webhooks.ps1` |
 | ⬜ | `PROD_BASE_URL` đã set trong GitHub prod environment | |
 
 ### 7.2 Trigger prod deploy
@@ -434,14 +476,16 @@ Các vấn đề phát hiện khi đọc code, cần giải quyết trước khi
 
 | # | Vấn đề | File | Độ ưu tiên | Cách fix |
 |---|---|---|---|---|
-| ❌ | Lambda Transformer là **stub** — chưa ghi thực vào Timestream | `modules/lambda/transformer/lambda/transformer_handler.py` | 🔴 Critical | Uncomment + implement boto3 `timestream-write` call |
+| ✅ | Lambda Transformer đã ghi thực vào **Timestream InfluxDB** via Line Protocol | `modules/lambda/transformer/lambda/transformer_handler.py` | ~~🔴 Critical~~ | Đã rewrite — dùng HTTP write API |
+| ✅ | **Timestream for InfluxDB** được provisioned trong Terraform | `modules/data/main.tf` | ~~🔴 Critical~~ | Đã thêm `aws_timestreaminfluxdb_db_instance` |
+| ✅ | Window Feeder dùng **Flux query API** thay vì `timestream-write` | `lambda/window-feeder/app.py` | ~~🔴 Critical~~ | Đã rewrite — dùng HTTP Flux API |
 | ❌ | Window Feeder ZIP **chưa tồn tại** | `lambda/window-feeder/build/window-feeder.zip` | 🔴 Critical | Build theo hướng dẫn Phase 2.2 |
-| ❌ | Không có Terraform resource tạo **Timestream database/table** | Không có file nào | 🔴 Critical | Tạo thủ công (CLI) hoặc thêm vào `modules/data/` |
 | ⚠️ | `sns_to_slack` module nhận `slack_webhook_url` hardcode `PLACEHOLDER` | `environments/sandbox/main.tf`, `staging/main.tf` | 🟡 High | Thay bằng URL thực hoặc SSM parameter lookup |
 | ⚠️ | Prod `sns_to_slack` nhận `slack_webhook_parameter_name` nhưng module có thể chưa support SSM lookup | `environments/prod/main.tf` | 🟡 High | Kiểm tra `modules/sns_to_slack/variables.tf` |
 | ⚠️ | Scripts `deploy-ecs-rolling.sh`, `deploy-codedeploy-bluegreen.sh`, `smoke-test.sh` **chưa tồn tại** | `scripts/` | 🟡 High | Tạo scripts hoặc CI sẽ skip (workflow có `if` guard) |
 | ℹ️ | Services `ingest-service`, `ingest-worker` **chưa có source code** | `services/` dir không tồn tại | 🟢 Low | CI sẽ tự skip khi không tìm thấy Dockerfile |
 | ℹ️ | `deploy role` trong IAM không có `lambda:*` — không thể deploy Lambda qua CI | `bootstrap/iam.tf` | 🟢 Medium | Thêm `lambda:*` vào `AllowApplicationDeployment` statement |
+| ℹ️ | IAM deploy role cần thêm `timestream-influxdb:*` và `secretsmanager:GetSecretValue` | `bootstrap/iam.tf` | 🟡 High | Thêm vào IAM policy để Terraform apply có thể tạo InfluxDB instance |
 
 ---
 
@@ -455,22 +499,25 @@ pip install -r ../requirements.txt -t build/package/
 cp app.py build/package/
 cd build/package && zip -r ../window-feeder.zip . && cd ../..
 
-# 2. Fix transformer stub (implement Timestream write)
-# Edit: infra/modules/lambda/transformer/lambda/transformer_handler.py
-
-# 3. Tạo Timestream database + table
-aws timestream-write create-database --database-name "tf4-cdo07-sandbox" --kms-key-id "alias/tf4-cdo07-bootstrap"
-aws timestream-write create-table --database-name "tf4-cdo07-sandbox" --table-name "service-metrics" --retention-properties "MemoryStoreRetentionPeriodInHours=48,MagneticStoreRetentionPeriodInDays=90"
-
-# 4. Apply sandbox
+# 2. Apply sandbox (Terraform tự tạo InfluxDB instance + SSM params + Secrets Manager)
 cd infra/environments/sandbox
 terraform init
 terraform plan -out=sandbox.tfplan
 terraform apply sandbox.tfplan
+# InfluxDB instance sẽ mất ~10-15 phút để chuyển sang AVAILABLE
 
-# 5. Smoke test
-aws kinesis put-record --stream-name tf4-cdo07-sandbox-ingest-stream --partition-key payment-gateway --data '{"service_id":"payment-gateway","metric_name":"cpu","value":50,"timestamp":"2026-06-29T00:00:00Z"}'
-aws lambda invoke --function-name tf4-cdo07-sandbox-window-feeder --payload '{}' /tmp/out.json && cat /tmp/out.json
+# 3. Verify InfluxDB
+aws timestream-influxdb list-db-instances --region us-east-1
+aws ssm get-parameter --name /tf4-cdo07/sandbox/influxdb-endpoint
+
+# 4. Smoke test — gửi metric vào Kinesis → Transformer → InfluxDB
+aws kinesis put-record --stream-name tf4-cdo07-sandbox-ingest-stream \
+  --partition-key payment-gateway \
+  --data '{"service_id":"payment-gateway","metric_type":"cpu_usage","value":45.2,"ts":"2026-06-29T00:00:00Z","tenant_id":"tnt-sandbox"}'
+
+# 5. Test Window Feeder
+aws lambda invoke --function-name tf4-cdo07-sandbox-window-feeder \
+  --payload '{}' /tmp/out.json && type /tmp/out.json
 ```
 
 ---
