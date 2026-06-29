@@ -74,6 +74,8 @@ def set_env_vars(monkeypatch):
     monkeypatch.setenv("TIMESTREAM_DATABASE_NAME", "test-metrics-db")
     monkeypatch.setenv("TIMESTREAM_TABLE_NAME", "service-metrics")
     monkeypatch.setenv("TIMESTREAM_QUERY_WINDOW", "1h")
+    monkeypatch.setenv("METRIC_WINDOW_STEP_SECONDS", "300")
+    monkeypatch.setenv("FORWARD_FILL_LOOKBACK_SECONDS", "900")
     monkeypatch.setenv("AI_ENGINE_PREDICT_URL", "http://test-ai-engine/v1/predict")
     monkeypatch.setenv("AI_ENGINE_TIMEOUT_SECONDS", "5")
     monkeypatch.setenv("AUDIT_S3_BUCKET", "test-audit-bucket")
@@ -127,6 +129,54 @@ def test_publish_drift_alert_when_no_drift(monkeypatch, set_env_vars):
 
     # Khang dinh: Ham publish cua SNS khong duoc goi
     mock_sns_publish.assert_not_called()
+
+
+def test_build_imputed_metric_window_forward_fills_missing_bucket(set_env_vars):
+    """Kiem tra Window Feeder lap day bucket bi thieu bang forward-fill."""
+    metrics_data = {
+        "source": "timestream",
+        "database": "test-metrics-db",
+        "table": "service-metrics",
+        "window": "15m",
+        "rows": [
+            {
+                "time": "2026-06-26 00:00:00.000000000",
+                "service_id": "payment-gw",
+                "tenant_id": "tenant-a",
+                "metric_type": "latency_ms",
+                "measure_name": "p95",
+                "value": "100.0",
+            },
+            {
+                "time": "2026-06-26 00:05:00.000000000",
+                "service_id": "payment-gw",
+                "tenant_id": "tenant-a",
+                "metric_type": "latency_ms",
+                "measure_name": "p95",
+                "value": "110.0",
+            },
+            {
+                "time": "2026-06-26 00:15:00.000000000",
+                "service_id": "payment-gw",
+                "tenant_id": "tenant-a",
+                "metric_type": "latency_ms",
+                "measure_name": "p95",
+                "value": "130.0",
+            },
+        ],
+    }
+
+    result = app.build_imputed_metric_window(metrics_data)
+
+    assert result["imputation"]["status"] == "ok"
+    assert [row["time"] for row in result["rows"]] == [
+        "2026-06-26T00:05:00Z",
+        "2026-06-26T00:10:00Z",
+        "2026-06-26T00:15:00Z",
+    ]
+    assert result["rows"][1]["value"] == 110.0
+    assert result["rows"][1]["imputed"] is True
+    assert result["rows"][1]["imputation_method"] == "forward_fill"
 
 # ===================================
 # Integration Tests for Main Handler

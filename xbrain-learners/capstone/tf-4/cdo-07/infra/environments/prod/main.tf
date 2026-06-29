@@ -147,6 +147,8 @@ module "window_feeder" {
     TIMESTREAM_DATABASE_NAME         = "${local.project}-${local.environment}"
     TIMESTREAM_TABLE_NAME            = "service-metrics"
     TIMESTREAM_QUERY_WINDOW          = "2h"
+    METRIC_WINDOW_STEP_SECONDS       = "300"
+    FORWARD_FILL_LOOKBACK_SECONDS    = "900"
     AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
     BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
