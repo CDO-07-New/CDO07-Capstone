@@ -74,6 +74,19 @@ jobs:
           fi
           echo "deploy_ready=true" >> "$GITHUB_OUTPUT"
 
+      - name: Build window-feeder Lambda package
+        if: steps.preflight.outputs.deploy_ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          lambda_dir="${PROJECT_DIR}/infra/lambda/window-feeder"
+          package_dir="${lambda_dir}/build/package"
+          rm -rf "${lambda_dir}/build"
+          mkdir -p "$package_dir"
+          python3 -m pip install --quiet requests -t "$package_dir"
+          cp "${lambda_dir}/app.py" "$package_dir/"
+          (cd "$package_dir" && zip -qr ../window-feeder.zip .)
+
       - name: Build CDO service images and compose manifest
         if: steps.preflight.outputs.deploy_ready == 'true'
         id: images
