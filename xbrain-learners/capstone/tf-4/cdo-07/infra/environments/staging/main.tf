@@ -50,8 +50,14 @@ module "sns_to_slack" {
   project     = local.project
   environment = local.environment
 
-  # For staging, use direct webhook URL (SSM-based is preferred for prod)
-  slack_webhook_url = "https://hooks.slack.com/services/PLACEHOLDER"
+  # Use SSM Parameter Store for webhook URL — consistent with prod pattern.
+  # Create the parameter once before apply:
+  #   aws ssm put-parameter \
+  #     --name /tf4-cdo07/staging/slack-webhook-url \
+  #     --type SecureString --value "https://hooks.slack.com/services/..." \
+  #     --key-id alias/tf4-cdo07-bootstrap
+  slack_webhook_parameter_name = "/${local.project}/${local.environment}/slack-webhook-url"
+  kms_key_arn                  = local.kms_key_arn
 
   tags = local.common_tags
 }

@@ -3,7 +3,8 @@
 import os
 import json
 import logging
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import requests
@@ -178,22 +179,99 @@ def query_timestream_metrics() -> dict:
         logger.error(f"Error querying Timestream: {e}")
         raise
 
+# Chuyển đổi Timestream rows sang AI API Contract schema.
+# AI API Contract yêu cầu field: signal_window[].{ts, tenant_id, service_id, metric_type, value}
+# + context.{deployment_version, time_range.{start_ts, end_ts}}
+def _build_predict_payload(metrics_data: dict) -> dict:
+    """Map Timestream rows → POST /v1/predict request body theo AI API Contract v1.0."""
+    rows = metrics_data.get("rows", [])
+    now = datetime.now(timezone.utc)
+
+    signal_window = []
+    for row in rows:
+        # Timestream trả về cột: time, service_id, tenant_id, metric_type, value
+        ts_raw = row.get("time") or row.get("ts")
+        value_raw = row.get("value")
+
+        # Bỏ qua record thiếu field bắt buộc
+        if not ts_raw or value_raw is None:
+            continue
+
+        # Normalize timestamp sang RFC3339 UTC
+        try:
+            ts_str = str(ts_raw)
+            # Timestream trả về dạng "2026-06-29 10:00:00.000000000"
+            if " " in ts_str and "T" not in ts_str:
+                ts_str = ts_str.replace(" ", "T").split(".")[0] + "Z"
+            elif not ts_str.endswith("Z") and "+" not in ts_str:
+                ts_str = ts_str + "Z"
+        except Exception:
+            ts_str = now.isoformat()
+
+        signal_window.append({
+            "ts": ts_str,
+            "tenant_id": row.get("tenant_id", "tenant-cdo-07"),
+            "service_id": row.get("service_id", "unknown"),
+            "metric_type": row.get("metric_type") or row.get("measure_name", "unknown"),
+            "value": float(value_raw),
+            "labels": {"region": "us-east-1"},
+        })
+
+    # Tính time_range từ window config (TIMESTREAM_QUERY_WINDOW = "2h")
+    window_str = TIMESTREAM_QUERY_WINDOW or "2h"
+    window_hours = int(window_str.replace("h", "")) if "h" in window_str else 2
+    start_ts = (now - timedelta(hours=window_hours)).isoformat()
+    end_ts = now.isoformat()
+
+    return {
+        "signal_window": signal_window,
+        "context": {
+            "deployment_version": os.environ.get("AWS_LAMBDA_FUNCTION_VERSION", "latest"),
+            "time_range": {
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+            },
+        },
+    }
+
+
 # Gửi payload metrics Timestream đã chuẩn hóa đến API /v1/predict của AI Engine.
 # Timeout được cấu hình nên thấp hơn timeout của Lambda để lỗi được trả về có thể dự đoán,
 # thay vì treo cho đến khi Lambda bị kết thúc.
+# AI API Contract: POST /v1/predict — header X-Tenant-Id bắt buộc.
 def invoke_ai_engine(metrics_data: dict) -> dict:
-    """Gửi dữ liệu metrics đến AI Engine để nhận dự báo."""
+    """Gửi dữ liệu metrics đến AI Engine để nhận dự báo theo AI API Contract v1.0."""
     load_config()
     logger.info(f"Invoking AI Engine at: {AI_ENGINE_PREDICT_URL}")
-    
+
+    # Map raw Timestream data → contract-compliant request body
+    payload = _build_predict_payload(metrics_data)
+
+    if not payload["signal_window"]:
+        logger.warning("No valid signal_window rows after mapping — skipping AI invoke.")
+        return {"anomaly": False, "severity": 0.0, "reasoning": "No signal data available."}
+
+    logger.info("Sending %d signal_window rows to AI Engine.", len(payload["signal_window"]))
+
+    # Lấy tenant_id đại diện từ signal đầu tiên để set header
+    tenant_id = payload["signal_window"][0].get("tenant_id", "tenant-cdo-07")
+
+    headers = {
+        "Content-Type": "application/json",
+        # AI API Contract: X-Tenant-Id là required header
+        "X-Tenant-Id": tenant_id,
+        # X-Correlation-Id: optional, giúp trace trên AI side
+        "X-Correlation-Id": str(uuid.uuid4()),
+    }
+
     try:
         response = requests.post(
             AI_ENGINE_PREDICT_URL,
-            json=metrics_data, # Gửi dữ liệu dưới dạng JSON
-            timeout=AI_ENGINE_TIMEOUT_SECONDS, # Đặt thời gian chờ để tránh Lambda bị treo
-            # auth=aws_auth # Bỏ comment dòng này nếu ALB của bạn được bảo vệ bằng IAM
+            json=payload,
+            headers=headers,
+            timeout=AI_ENGINE_TIMEOUT_SECONDS,
         )
-        response.raise_for_status()  # Ném HTTPError nếu phản hồi lỗi (4xx hoặc 5xx)
+        response.raise_for_status()
         logger.info(f"AI Engine responded with status: {response.status_code}")
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -232,23 +310,53 @@ def write_audit_log(input_data: dict, output_data: dict):
 # Chỉ phát cảnh báo drift khi phản hồi AI đánh dấu rõ ràng drift_detected.
 # SNS topic sẽ phân phối cảnh báo đến các kênh thông báo như Slack hoặc quy trình on-call.
 def publish_drift_alert(ai_response: dict):
-    """Gửi cảnh báo độ lệch (drift) tới SNS nếu AI Engine phát hiện."""
+    """Gửi cảnh báo tới SNS nếu AI Engine phát hiện anomaly.
+
+    AI API Contract v1.0 response schema:
+      anomaly (bool)       — True nếu detect anomaly
+      severity (float)     — 0.0-1.0
+      recommendation       — {action_verb, target, from_to, confidence, evidence_link}
+      reasoning (str)      — human-readable rationale (≤300 chars)
+      audit_id (UUID)      — reference cho audit trail
+    """
     load_config()
-    if ai_response.get("drift_detected", False): # Kiểm tra có 'drift_detected' trong phản hồi của AI
+    # AI API Contract trả về field "anomaly", KHÔNG phải "drift_detected"
+    if ai_response.get("anomaly", False):
+        severity = ai_response.get("severity", 0.0)
+        recommendation = ai_response.get("recommendation", {})
+        reasoning = ai_response.get("reasoning", "")
+        audit_id = ai_response.get("audit_id", "")
+
+        subject = (
+            f"[DRIFT] anomaly=true severity={severity:.2f} | "
+            f"{recommendation.get('action_verb','?')} {recommendation.get('target','?')}"
+        )[:100]
+
         message = {
-            "default": json.dumps(ai_response, indent=2),
-            "subject": f"Drift Detected in {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'window-feeder')}",
-            "message": f"AI Engine detected a drift. Details: \n{json.dumps(ai_response, indent=2)}"
+            "source": "window-feeder",
+            "anomaly": True,
+            "severity": severity,
+            "recommendation": recommendation,
+            "reasoning": reasoning,
+            "audit_id": audit_id,
+            "function": os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "window-feeder"),
         }
-        logger.warning(f"Drift detected. Publishing alert to {DRIFT_ALERT_SNS_TOPIC_ARN}")
+        logger.warning(
+            "Anomaly detected by AI Engine | severity=%.2f | action=%s | audit_id=%s",
+            severity,
+            recommendation.get("action_verb"),
+            audit_id,
+        )
         try:
             sns_client.publish(
                 TopicArn=DRIFT_ALERT_SNS_TOPIC_ARN,
-                Message=json.dumps({'default': json.dumps(message)}),
-                MessageStructure='json'
+                Subject=subject,
+                Message=json.dumps(message, indent=2),
             )
         except Exception as e:
             logger.error(f"Failed to publish SNS alert: {e}")
+    else:
+        logger.info("AI Engine: no anomaly detected (anomaly=false).")
 
 
 # =================================================================

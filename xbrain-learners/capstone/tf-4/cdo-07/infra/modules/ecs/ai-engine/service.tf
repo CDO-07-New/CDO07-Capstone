@@ -52,10 +52,15 @@ module "ai_engine_service" {
       ]
 
       environment = [
+        # Deployment Contract §Secrets — baseline
         { name = "AWS_REGION", value = var.aws_region },
         { name = "BASELINE_BACKEND", value = "s3" },
         { name = "BASELINE_S3_BUCKET", value = var.baseline_s3_bucket },
         { name = "BASELINE_S3_PREFIX", value = var.baseline_s3_prefix },
+        # Deployment Contract §Secrets — audit log (S3 + KMS)
+        { name = "AUDIT_BACKEND", value = "s3" },
+        { name = "AUDIT_S3_BUCKET", value = var.audit_s3_bucket },
+        { name = "AUDIT_KMS_KEY_ID", value = var.kms_key_arn },
       ]
 
       # CloudWatch log configuration
