@@ -475,5 +475,3 @@ aws lambda invoke --function-name tf4-cdo07-sandbox-window-feeder --payload '{}'
 
 ---
 
-*Checklist tạo bởi Kiro · CDO-07 · 2026-06-29*
-*Cập nhật khi có thay đổi infra: append, không xóa dòng đã check.*
