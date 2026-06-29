@@ -63,9 +63,9 @@ resource "aws_iam_policy" "fallback" {
     Statement = [
       # SNS: chỉ publish lên topic alert, không có quyền manage topic
       {
-        Sid    = "AllowSNSPublishAlert"
-        Effect = "Allow"
-        Action = ["sns:Publish"]
+        Sid      = "AllowSNSPublishAlert"
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
         Resource = [var.alert_sns_topic_arn]
       },
       # S3: ghi audit log vào prefix cụ thể
@@ -145,17 +145,17 @@ resource "aws_lambda_function" "fallback" {
 
   environment {
     variables = {
-      LOG_LEVEL                  = var.log_level
-      ALERT_SNS_TOPIC_ARN        = var.alert_sns_topic_arn
-      AUDIT_S3_BUCKET            = var.audit_s3_bucket_name
-      AUDIT_S3_PREFIX            = var.audit_s3_prefix
-      GRAFANA_HOST               = var.grafana_host
-      GRAFANA_API_KEY_PARAMETER  = var.grafana_api_key_parameter
-      GRAFANA_DASHBOARD_UID      = var.grafana_dashboard_uid
-      THRESHOLD_CPU_PCT          = tostring(var.threshold_cpu_pct)
-      THRESHOLD_MEMORY_PCT       = tostring(var.threshold_memory_pct)
-      THRESHOLD_ALB_CONNECTIONS  = tostring(var.threshold_alb_connections)
-      THRESHOLD_QUEUE_DEPTH      = tostring(var.threshold_queue_depth)
+      LOG_LEVEL                 = var.log_level
+      ALERT_SNS_TOPIC_ARN       = var.alert_sns_topic_arn
+      AUDIT_S3_BUCKET           = var.audit_s3_bucket_name
+      AUDIT_S3_PREFIX           = var.audit_s3_prefix
+      GRAFANA_HOST              = var.grafana_host
+      GRAFANA_API_KEY_PARAMETER = var.grafana_api_key_parameter
+      GRAFANA_DASHBOARD_UID     = var.grafana_dashboard_uid
+      THRESHOLD_CPU_PCT         = tostring(var.threshold_cpu_pct)
+      THRESHOLD_MEMORY_PCT      = tostring(var.threshold_memory_pct)
+      THRESHOLD_ALB_CONNECTIONS = tostring(var.threshold_alb_connections)
+      THRESHOLD_QUEUE_DEPTH     = tostring(var.threshold_queue_depth)
     }
   }
 
@@ -192,10 +192,10 @@ resource "aws_sns_topic_subscription" "fallback_trigger" {
 #    Cảnh báo nếu chính Lambda Fallback bị lỗi liên tục
 # ---------------------------------------------------------------------------
 resource "aws_cloudwatch_metric_alarm" "fallback_errors" {
-  alarm_name          = "${local.function_name}-errors"
-  alarm_description   = "Fail-Open Fallback Lambda gặp lỗi liên tiếp — cần kiểm tra ngay"
-  namespace           = "AWS/Lambda"
-  metric_name         = "Errors"
+  alarm_name        = "${local.function_name}-errors"
+  alarm_description = "Fail-Open Fallback Lambda gặp lỗi liên tiếp — cần kiểm tra ngay"
+  namespace         = "AWS/Lambda"
+  metric_name       = "Errors"
   dimensions = {
     FunctionName = aws_lambda_function.fallback.function_name
   }

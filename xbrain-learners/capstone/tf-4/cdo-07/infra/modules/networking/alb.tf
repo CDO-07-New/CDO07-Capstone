@@ -2,11 +2,11 @@ module "alb" {
   source  = "terraform-aws-modules/alb/aws"
   version = "~> 9.0"
 
-  name               = "${local.name}-alb"
-  load_balancer_type = "application"
-  vpc_id             = module.vpc.vpc_id
-  subnets            = module.vpc.private_subnets
-  internal           = true # No public subnet available, must be internal
+  name                       = "${local.name}-alb"
+  load_balancer_type         = "application"
+  vpc_id                     = module.vpc.vpc_id
+  subnets                    = module.vpc.private_subnets
+  internal                   = true # No public subnet available, must be internal
   enable_deletion_protection = false
 
   # Security group for ALB allowing HTTP traffic from VPC CIDR

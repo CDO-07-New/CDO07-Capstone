@@ -22,6 +22,12 @@ variable "private_subnet_cidr_b" {
   default     = "10.0.2.0/24"
 }
 
+variable "enable_vpc_endpoints" {
+  description = "Create VPC Interface and Gateway Endpoints. Set to false in sandbox to reduce cost."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
