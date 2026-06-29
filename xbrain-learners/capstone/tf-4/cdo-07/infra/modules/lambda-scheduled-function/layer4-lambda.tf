@@ -90,6 +90,18 @@ variable "timestream_query_window" {
   default     = "2h"
 }
 
+variable "metric_window_step_seconds" {
+  description = "Regular bucket size, in seconds, used by Window Feeder before posting to AI Engine."
+  type        = number
+  default     = 300
+}
+
+variable "forward_fill_lookback_seconds" {
+  description = "Extra lookback, in seconds, queried from Timestream to seed forward-fill at the start of the AI window."
+  type        = number
+  default     = 900
+}
+
 variable "ai_engine_predict_url" {
   description = "Internal ALB endpoint for AI Engine prediction, for example http://internal-alb/v1/predict."
   type        = string
@@ -142,16 +154,18 @@ module "window_feeder" {
   event_payload       = var.window_feeder_event_payload
 
   environment_variables = {
-      TIMESTREAM_DATABASE_NAME         = var.timestream_database_name
-      TIMESTREAM_TABLE_NAME            = var.timestream_table_name
-      TIMESTREAM_QUERY_WINDOW          = var.timestream_query_window
-      AI_ENGINE_PREDICT_URL            = var.ai_engine_predict_url
-      AI_ENGINE_TIMEOUT_SECONDS        = tostring(var.window_feeder_timeout_seconds)
-      BASELINE_S3_BUCKET               = var.baseline_s3_bucket_name
-      AUDIT_S3_BUCKET                  = var.audit_s3_bucket_name
-      AUDIT_S3_PREFIX                  = var.audit_s3_prefix
-      INFERENCE_ENABLED_PARAMETER_NAME = var.inference_enabled_parameter_name
-      DRIFT_ALERT_SNS_TOPIC_ARN        = var.drift_alert_sns_topic_arn
+    TIMESTREAM_DATABASE_NAME         = var.timestream_database_name
+    TIMESTREAM_TABLE_NAME            = var.timestream_table_name
+    TIMESTREAM_QUERY_WINDOW          = var.timestream_query_window
+    METRIC_WINDOW_STEP_SECONDS       = tostring(var.metric_window_step_seconds)
+    FORWARD_FILL_LOOKBACK_SECONDS    = tostring(var.forward_fill_lookback_seconds)
+    AI_ENGINE_PREDICT_URL            = var.ai_engine_predict_url
+    AI_ENGINE_TIMEOUT_SECONDS        = tostring(var.window_feeder_timeout_seconds)
+    BASELINE_S3_BUCKET               = var.baseline_s3_bucket_name
+    AUDIT_S3_BUCKET                  = var.audit_s3_bucket_name
+    AUDIT_S3_PREFIX                  = var.audit_s3_prefix
+    INFERENCE_ENABLED_PARAMETER_NAME = var.inference_enabled_parameter_name
+    DRIFT_ALERT_SNS_TOPIC_ARN        = var.drift_alert_sns_topic_arn
   }
 
   iam_policy_document_json = jsonencode({
@@ -181,9 +195,9 @@ module "window_feeder" {
         ]
       },
       {
-        Sid    = "ReadInferenceGate"
-        Effect = "Allow"
-        Action = ["ssm:GetParameter"]
+        Sid      = "ReadInferenceGate"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
         Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${var.inference_enabled_parameter_name}"
       },
       {
@@ -196,15 +210,15 @@ module "window_feeder" {
         ]
       },
       {
-        Sid    = "WriteAuditObjects"
-        Effect = "Allow"
-        Action = ["s3:PutObject"]
+        Sid      = "WriteAuditObjects"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
         Resource = "arn:aws:s3:::${var.audit_s3_bucket_name}/${var.audit_s3_prefix}*"
       },
       {
-        Sid    = "PublishDriftAlerts"
-        Effect = "Allow"
-        Action = ["sns:Publish"]
+        Sid      = "PublishDriftAlerts"
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
         Resource = var.drift_alert_sns_topic_arn
       },
       {
