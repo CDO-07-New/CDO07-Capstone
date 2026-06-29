@@ -11,8 +11,8 @@ Python Lambda source for the Layer 4 EventBridge Window Feeder.
 ## Flow
 
 1. Read `INFERENCE_ENABLED_PARAMETER_NAME` from SSM.
-2. Query Amazon Managed Prometheus over `AMP_QUERY_WINDOW`.
-3. POST the metric window to AI Engine `/v1/predict`.
+2. Query Amazon Timestream over `TIMESTREAM_QUERY_WINDOW` plus a short lookback.
+3. Build a regular metric grid and forward-fill missing buckets before posting to AI Engine `/v1/predict`.
 4. Write audit JSON to S3.
 5. Publish SNS alert when drift is detected or the feeder fails.
 
