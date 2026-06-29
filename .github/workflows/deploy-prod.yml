@@ -103,6 +103,18 @@ jobs:
         with:
           terraform_version: 1.10.5
 
+      - name: Build window-feeder Lambda package
+        shell: bash
+        run: |
+          set -euo pipefail
+          lambda_dir="${PROJECT_DIR}/infra/lambda/window-feeder"
+          package_dir="${lambda_dir}/build/package"
+          rm -rf "${lambda_dir}/build"
+          mkdir -p "$package_dir"
+          python3 -m pip install --quiet requests -t "$package_dir"
+          cp "${lambda_dir}/app.py" "$package_dir/"
+          (cd "$package_dir" && zip -qr ../window-feeder.zip .)
+
       - name: Resolve immutable image digests from approved SHA
         id: images
         shell: bash
