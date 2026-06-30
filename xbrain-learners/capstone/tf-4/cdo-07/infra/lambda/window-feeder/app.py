@@ -1,59 +1,76 @@
 # lambda/window-feeder/app.py
 
-import os
+import csv
+import io
 import json
 import logging
+import os
 import re
+import uuid
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import boto3
-import requests
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 from botocore.config import Config
 
-# =================================================================
-# Hằng số và cấu hình
-# =================================================================
-# Cấu hình logging.
-# Best practice là đặt mức độ log thông qua biến môi trường.
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 logger = logging.getLogger()
 logger.setLevel(LOG_LEVEL)
 
 REGION = os.environ.get("AWS_REGION", "us-east-1")
-TIMESTREAM_DATABASE_NAME = os.environ.get("TIMESTREAM_DATABASE_NAME")
-TIMESTREAM_TABLE_NAME = os.environ.get("TIMESTREAM_TABLE_NAME")
-TIMESTREAM_QUERY_WINDOW = os.environ.get("TIMESTREAM_QUERY_WINDOW")
+INFLUXDB_URL = os.environ.get("INFLUXDB_URL")
+INFLUXDB_BUCKET = os.environ.get("INFLUXDB_BUCKET")
+INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG")
+INFLUXDB_SECRET_ARN = os.environ.get("INFLUXDB_SECRET_ARN")
+INFLUXDB_QUERY_WINDOW = os.environ.get("INFLUXDB_QUERY_WINDOW")
 METRIC_WINDOW_STEP_SECONDS = int(os.environ.get("METRIC_WINDOW_STEP_SECONDS", "300"))
 FORWARD_FILL_LOOKBACK_SECONDS = int(os.environ.get("FORWARD_FILL_LOOKBACK_SECONDS", "900"))
 AI_ENGINE_PREDICT_URL = os.environ.get("AI_ENGINE_PREDICT_URL")
 AI_ENGINE_TIMEOUT_SECONDS = int(os.environ.get("AI_ENGINE_TIMEOUT_SECONDS", "5"))
-AUDIT_S3_BUCKET = os.environ.get("AUDIT_S3_BUCKET")
-AUDIT_S3_PREFIX = os.environ.get("AUDIT_S3_PREFIX")
+AI_ENGINE_SIGV4_SERVICE = os.environ.get("AI_ENGINE_SIGV4_SERVICE", "execute-api")
+DEPLOYMENT_VERSION = os.environ.get("DEPLOYMENT_VERSION")
 INFERENCE_ENABLED_PARAMETER_NAME = os.environ.get("INFERENCE_ENABLED_PARAMETER_NAME")
 DRIFT_ALERT_SNS_TOPIC_ARN = os.environ.get("DRIFT_ALERT_SNS_TOPIC_ARN")
 
-# Tải và kiểm tra cấu hình runtime từ biến môi trường của Lambda.
-# Hàm này được gọi bên trong các hàm khác thay vì chỉ lúc import để unit test
-# có thể vá biến môi trường trước khi chạy mã Lambda.
+# Client = Đối tượng trong code để gọi API của 1 AWS service
+boto_config = Config(
+    region_name=REGION,
+    retries={"max_attempts": 3, "mode": "standard"},
+)
+ssm_client = boto3.client("ssm", config=boto_config)
+secretsmanager_client = boto3.client("secretsmanager", config=boto_config)
+sns_client = boto3.client("sns", config=boto_config)
+
+_influxdb_token_cache = None
+
+
+# 1. Liệt kê các biến môi trường bắt buộc
+# 2. Kiểm tra biến nào thiếu thì fail sớm
+# 3. Đọc env vars và gán vào biến global để Lambda dùng
 def load_config():
-    """Nạp lại cấu hình từ environment để Lambda và unit test dùng cùng một luồng chạy."""
+    """Reload Lambda runtime configuration from environment variables."""
     global REGION
-    global TIMESTREAM_DATABASE_NAME, TIMESTREAM_TABLE_NAME, TIMESTREAM_QUERY_WINDOW
+    global INFLUXDB_URL, INFLUXDB_BUCKET, INFLUXDB_ORG, INFLUXDB_SECRET_ARN, INFLUXDB_QUERY_WINDOW
     global METRIC_WINDOW_STEP_SECONDS, FORWARD_FILL_LOOKBACK_SECONDS
-    global AI_ENGINE_PREDICT_URL, AI_ENGINE_TIMEOUT_SECONDS
-    global AUDIT_S3_BUCKET, AUDIT_S3_PREFIX, INFERENCE_ENABLED_PARAMETER_NAME, DRIFT_ALERT_SNS_TOPIC_ARN
+    global AI_ENGINE_PREDICT_URL, AI_ENGINE_TIMEOUT_SECONDS, AI_ENGINE_SIGV4_SERVICE, DEPLOYMENT_VERSION
+    global INFERENCE_ENABLED_PARAMETER_NAME, DRIFT_ALERT_SNS_TOPIC_ARN
 
     required = [
         "AWS_REGION",
-        "TIMESTREAM_DATABASE_NAME",
-        "TIMESTREAM_TABLE_NAME",
-        "TIMESTREAM_QUERY_WINDOW",
+        "INFLUXDB_URL",
+        "INFLUXDB_BUCKET",
+        "INFLUXDB_ORG",
+        "INFLUXDB_SECRET_ARN",
+        "INFLUXDB_QUERY_WINDOW",
         "METRIC_WINDOW_STEP_SECONDS",
         "FORWARD_FILL_LOOKBACK_SECONDS",
         "AI_ENGINE_PREDICT_URL",
         "AI_ENGINE_TIMEOUT_SECONDS",
-        "AUDIT_S3_BUCKET",
-        "AUDIT_S3_PREFIX",
+        "DEPLOYMENT_VERSION",
         "INFERENCE_ENABLED_PARAMETER_NAME",
         "DRIFT_ALERT_SNS_TOPIC_ARN",
     ]
@@ -62,120 +79,104 @@ def load_config():
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
     REGION = os.environ["AWS_REGION"]
-    TIMESTREAM_DATABASE_NAME = os.environ["TIMESTREAM_DATABASE_NAME"]
-    TIMESTREAM_TABLE_NAME = os.environ["TIMESTREAM_TABLE_NAME"]
-    TIMESTREAM_QUERY_WINDOW = os.environ["TIMESTREAM_QUERY_WINDOW"]
+    INFLUXDB_URL = os.environ["INFLUXDB_URL"]
+    INFLUXDB_BUCKET = os.environ["INFLUXDB_BUCKET"]
+    INFLUXDB_ORG = os.environ["INFLUXDB_ORG"]
+    INFLUXDB_SECRET_ARN = os.environ["INFLUXDB_SECRET_ARN"]
+    INFLUXDB_QUERY_WINDOW = os.environ["INFLUXDB_QUERY_WINDOW"]
     METRIC_WINDOW_STEP_SECONDS = int(os.environ["METRIC_WINDOW_STEP_SECONDS"])
     FORWARD_FILL_LOOKBACK_SECONDS = int(os.environ["FORWARD_FILL_LOOKBACK_SECONDS"])
     AI_ENGINE_PREDICT_URL = os.environ["AI_ENGINE_PREDICT_URL"]
     AI_ENGINE_TIMEOUT_SECONDS = int(os.environ["AI_ENGINE_TIMEOUT_SECONDS"])
-    AUDIT_S3_BUCKET = os.environ["AUDIT_S3_BUCKET"]
-    AUDIT_S3_PREFIX = os.environ["AUDIT_S3_PREFIX"]
+    AI_ENGINE_SIGV4_SERVICE = os.environ.get("AI_ENGINE_SIGV4_SERVICE", "execute-api")
+    DEPLOYMENT_VERSION = os.environ["DEPLOYMENT_VERSION"]
     INFERENCE_ENABLED_PARAMETER_NAME = os.environ["INFERENCE_ENABLED_PARAMETER_NAME"]
     DRIFT_ALERT_SNS_TOPIC_ARN = os.environ["DRIFT_ALERT_SNS_TOPIC_ARN"]
 
-# =================================================================
-# Khởi tạo AWS client
-# =================================================================
-# Khởi tạo các client của AWS SDK (boto3) bên ngoài hàm handler.
-# Điều này cho phép Lambda tái sử dụng kết nối giữa các lần gọi, giúp cải thiện hiệu năng.
-boto_config = Config(
-    region_name=REGION,
-    retries={'max_attempts': 3, 'mode': 'standard'} # Tự động thử lại 3 lần nếu có lỗi tạm thời
-)
-ssm_client = boto3.client("ssm", config=boto_config) # Dùng để đọc tham số từ SSM Parameter Store
-timestream_query_client = boto3.client("timestream-query", config=boto_config) # Dùng để truy vấn Amazon Timestream
-s3_client = boto3.client("s3", config=boto_config)   # Dùng để ghi audit log vào S3
-sns_client = boto3.client("sns", config=boto_config) # Dùng để gửi cảnh báo tới SNS
-
-# =================================================================
-# Các hàm hỗ trợ
-# =================================================================
-
-# Đọc cờ điều khiển vận hành từ SSM Parameter Store.
-# Nếu tham số này không đúng bằng "true", Lambda sẽ thoát sớm và không
-# truy vấn Timestream hoặc gọi AI Engine.
+# Hàm này gọi tới SSM Parameter Store để check xem cái biến Chạy dự báo true hay false
 def is_inference_enabled() -> bool:
-    """Kiểm tra "cổng" điều khiển hoạt động trong SSM Parameter Store."""
+    """Read the operational inference gate from SSM Parameter Store."""
     load_config()
     try:
-        logger.info(f"Checking SSM parameter: {INFERENCE_ENABLED_PARAMETER_NAME}")
+        logger.info("Checking SSM parameter: %s", INFERENCE_ENABLED_PARAMETER_NAME)
         parameter = ssm_client.get_parameter(Name=INFERENCE_ENABLED_PARAMETER_NAME)
         is_enabled = parameter["Parameter"]["Value"].lower() == "true"
-        logger.info(f"Inference enabled status: {is_enabled}")
+        logger.info("Inference enabled status: %s", is_enabled)
         return is_enabled
-    except Exception as e:
-        logger.error(f"Failed to read SSM parameter: {e}")
-        # An toàn là trên hết: nếu không đọc được tham số, mặc định là hệ thống đang tắt.
+    except Exception as exc:
+        logger.error("Failed to read SSM parameter: %s", exc)
         return False
 
-# Chuyển một giá trị ô Timestream thành giá trị Python thông thường.
-# Timestream có thể trả về dạng scalar, array, row và time-series, nên hàm hỗ trợ
-# này chuẩn hóa dữ liệu trước khi payload được gửi đến AI Engine.
-def _parse_timestream_value(value: dict):
-    if value.get("NullValue"):
-        return None
-    if "ScalarValue" in value:
-        return value["ScalarValue"]
-    if "TimeSeriesValue" in value:
-        return [
-            {
-                "time": item["Time"],
-                "value": _parse_timestream_value(item["Value"]),
-            }
-            for item in value["TimeSeriesValue"]
-        ]
-    if "ArrayValue" in value:
-        return [_parse_timestream_value(item) for item in value["ArrayValue"]]
-    if "RowValue" in value:
-        return _parse_timestream_row(value["RowValue"])
-    return None
+# Hàm này lấy token kết nối InfluxDB từ AWS Secrets Manager + Cache token nào vào memory
+def _get_influxdb_token() -> str:
+    global _influxdb_token_cache
+    load_config()
+    if _influxdb_token_cache:
+        return _influxdb_token_cache
 
-# Chuyển một dòng Timestream thành dictionary với khóa là tên cột.
-# Điều này giúp mã phía sau không phụ thuộc vào cấu trúc phản hồi lồng nhau của Timestream.
-def _parse_timestream_row(row: dict) -> dict:
-    return {
-        column["Name"]: _parse_timestream_value(value)
-        for column, value in zip(row["ColumnInfo"], row["Data"])
-    }
+    response = secretsmanager_client.get_secret_value(SecretId=INFLUXDB_SECRET_ARN)
+    secret = response.get("SecretString")
+    if not secret:
+        raise RuntimeError("InfluxDB secret does not contain SecretString")
 
-# Truy vấn cửa sổ metrics trượt từ Amazon Timestream.
-# Đây là phía đọc của luồng nạp dữ liệu Kinesis -> Firehose -> Transformer -> Timestream
-# được thể hiện trong sơ đồ kiến trúc.
+    token = secret
+    try:
+        payload = json.loads(secret)
+        for key in ("token", "operatorToken", "operator_token", "authToken", "auth_token"):
+            if payload.get(key):
+                token = payload[key]
+                break
+    except json.JSONDecodeError:
+        token = secret
+
+    _influxdb_token_cache = token
+    return token
+
+
+# Hàm này dùng để chuyển chuỗi thời gian ngắn như "5m", "2h", "1d" thành số giây
 def _parse_duration_seconds(duration: str) -> int:
     match = re.fullmatch(r"\s*(\d+)\s*(s|m|h|d)\s*", duration)
     if not match:
         raise ValueError(f"Unsupported duration format: {duration}")
 
     amount = int(match.group(1))
-    unit_seconds = {
-        "s": 1,
-        "m": 60,
-        "h": 3600,
-        "d": 86400,
-    }
+    unit_seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     return amount * unit_seconds[match.group(2)]
 
 
-def _format_timestream_duration(seconds: int) -> str:
+def _format_influx_duration(seconds: int) -> str:
     return f"{seconds}s"
 
+# Làm sạch chuỗi để dùng an toàn trong Flux query string
+def _escape_flux_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
-def _parse_timestream_timestamp(value: str) -> datetime:
-    normalized = value.replace("T", " ").replace("Z", "")
+# Đảm bảo timestamp metric luôn sạch, parse được, và thống nhất về UTC.
+def _parse_metric_timestamp(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    if " " in normalized and "T" not in normalized:
+        normalized = normalized.replace(" ", "T")
     if "." in normalized:
-        head, fraction = normalized.split(".", 1)
-        normalized = f"{head}.{fraction[:6].ljust(6, '0')}"
-        parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S.%f")
-    else:
-        parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S")
-    return parsed.replace(tzinfo=timezone.utc)
+        head, tail = normalized.split(".", 1)
+        fraction = tail
+        suffix = ""
+        for marker in ("+", "-"):
+            if marker in tail:
+                fraction, suffix = tail.split(marker, 1)
+                suffix = marker + suffix
+                break
+        normalized = f"{head}.{fraction[:6].ljust(6, '0')}{suffix}"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
-
+# Hàm này chuyển một object datetime thành chuỗi timestamp chuẩn UTC để đưa vào payload JSON.
 def _format_payload_timestamp(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-
+# Hàm này dùng để làm tròn thời gian xuống theo mốc cố định.
+# Ví dụ nếu step_seconds = 300, tức là bước 5 phút.
 def _floor_time(value: datetime, step_seconds: int) -> datetime:
     epoch_seconds = int(value.timestamp())
     return datetime.fromtimestamp(
@@ -183,8 +184,8 @@ def _floor_time(value: datetime, step_seconds: int) -> datetime:
         tz=timezone.utc,
     )
 
-
-def _metric_series_key(row: dict) -> tuple:
+# Từ cục dữ liệu nhận vào, lấy ra 4 field, gom lại thành 1 {} rồi trả về
+def _metric_series_key(row: dict) -> tuple: # dict: Kiểu dữ liệu lưu trữ dạng key, value
     return (
         row.get("tenant_id"),
         row.get("service_id"),
@@ -192,14 +193,38 @@ def _metric_series_key(row: dict) -> tuple:
         row.get("measure_name"),
     )
 
-
+# Lấy ra giá trị của cái key tên "Value" rồi lấy giá trị của cái key này đem đi check 
 def _numeric_metric_value(row: dict):
     value = row.get("value")
     if value is None:
         return None
     return float(value)
 
+# chuyển kết quả CSV trả về từ InfluxDB thành list các dict metric dễ xử lý
+def _parse_influx_csv(csv_text: str) -> list[dict]:
+    data_lines = [
+        line for line in csv_text.splitlines()
+        if line and not line.startswith("#")
+    ]
+    if not data_lines:
+        return []
 
+    rows = []
+    reader = csv.DictReader(io.StringIO("\n".join(data_lines)))
+    for item in reader:
+        if not item.get("_time") or not item.get("_value"):
+            continue
+        rows.append({
+            "time": item["_time"],
+            "service_id": item.get("service_id") or "unknown",
+            "tenant_id": item.get("tenant_id") or "unknown",
+            "metric_type": item.get("_measurement") or item.get("metric_type") or "unknown",
+            "measure_name": item.get("_field") or "value",
+            "value": item["_value"],
+        })
+    return rows
+
+# chuẩn hóa dữ liệu metric thành các mốc thời gian đều nhau, rồi forward-fill các điểm bị thiếu.
 def build_imputed_metric_window(metrics_data: dict) -> dict:
     """Build a regular time grid and forward-fill missing metric points per series."""
     load_config()
@@ -210,11 +235,11 @@ def build_imputed_metric_window(metrics_data: dict) -> dict:
         try:
             parsed_rows.append({
                 **row,
-                "_time": _parse_timestream_timestamp(row["time"]),
+                "_time": _parse_metric_timestamp(row["time"]),
                 "_value": _numeric_metric_value(row),
             })
         except (KeyError, TypeError, ValueError) as exc:
-            logger.warning("Skipping malformed Timestream row during imputation: %s. row=%s", exc, row)
+            logger.warning("Skipping malformed metric row during imputation: %s. row=%s", exc, row)
 
     if not parsed_rows:
         return {
@@ -294,171 +319,256 @@ def build_imputed_metric_window(metrics_data: dict) -> dict:
     }
 
 
-def query_timestream_metrics() -> dict:
-    """Truy vấn dữ liệu metrics trong khoảng thời gian gần nhất từ Amazon Timestream."""
+def query_influxdb_metrics(window: str | None = None) -> dict:
+    """Query the recent metric window from Timestream for InfluxDB."""
     load_config()
-    query_window_seconds = _parse_duration_seconds(TIMESTREAM_QUERY_WINDOW)
-    query_window_with_lookback = _format_timestream_duration(
+    query_window = window or INFLUXDB_QUERY_WINDOW
+    query_window_seconds = _parse_duration_seconds(query_window)
+    query_window_with_lookback = _format_influx_duration(
         query_window_seconds + FORWARD_FILL_LOOKBACK_SECONDS
     )
-    query = f'''
-        SELECT
-          time,
-          service_id,
-          tenant_id,
-          metric_type,
-          measure_name,
-          measure_value::double AS value
-        FROM "{TIMESTREAM_DATABASE_NAME}"."{TIMESTREAM_TABLE_NAME}"
-        WHERE time >= ago({query_window_with_lookback})
-        ORDER BY time ASC
+    flux = f'''
+        from(bucket: "{_escape_flux_string(INFLUXDB_BUCKET)}")
+          |> range(start: -{query_window_with_lookback})
+          |> filter(fn: (r) => r._field == "value")
+          |> keep(columns: ["_time", "_measurement", "_field", "_value", "service_id", "tenant_id"])
+          |> sort(columns: ["_time"])
     '''
 
-    logger.info(
-        "Querying Timestream table %s.%s with window %s",
-        TIMESTREAM_DATABASE_NAME,
-        TIMESTREAM_TABLE_NAME,
-        TIMESTREAM_QUERY_WINDOW,
+    query_url = f"{INFLUXDB_URL.rstrip('/')}/api/v2/query?org={urllib.parse.quote(INFLUXDB_ORG)}"
+    request = urllib.request.Request(
+        query_url,
+        data=json.dumps({"query": flux, "type": "flux"}).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Token {_get_influxdb_token()}",
+            "Accept": "application/csv",
+            "Content-Type": "application/json",
+        },
     )
 
+    logger.info("Querying InfluxDB bucket %s with window %s", INFLUXDB_BUCKET, query_window)
     try:
-        response = timestream_query_client.query(QueryString=query)
-        rows = [
-            _parse_timestream_row({
-                "ColumnInfo": response["ColumnInfo"],
-                "Data": row["Data"],
-            })
-            for row in response.get("Rows", [])
-        ]
-        logger.info("Successfully queried %d rows from Timestream.", len(rows))
+        with urllib.request.urlopen(request, timeout=AI_ENGINE_TIMEOUT_SECONDS) as response:
+            body = response.read().decode("utf-8")
+        rows = _parse_influx_csv(body)
+        logger.info("Successfully queried %d rows from InfluxDB.", len(rows))
         metrics_data = {
-            "source": "timestream",
-            "database": TIMESTREAM_DATABASE_NAME,
-            "table": TIMESTREAM_TABLE_NAME,
-            "window": TIMESTREAM_QUERY_WINDOW,
+            "source": "timestream-influxdb",
+            "bucket": INFLUXDB_BUCKET,
+            "org": INFLUXDB_ORG,
+            "window": query_window,
             "query_window_with_lookback": query_window_with_lookback,
             "rows": rows,
         }
         return build_imputed_metric_window(metrics_data)
-    except Exception as e:
-        logger.error(f"Error querying Timestream: {e}")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        logger.error("InfluxDB query HTTP %d: %s", exc.code, body)
+        raise
+    except Exception as exc:
+        logger.error("Error querying InfluxDB: %s", exc)
         raise
 
-# Gửi payload metrics Timestream đã chuẩn hóa đến API /v1/predict của AI Engine.
-# Timeout được cấu hình nên thấp hơn timeout của Lambda để lỗi được trả về có thể dự đoán,
-# thay vì treo cho đến khi Lambda bị kết thúc.
-def invoke_ai_engine(metrics_data: dict) -> dict:
-    """Gửi dữ liệu metrics đến AI Engine để nhận dự báo."""
-    load_config()
-    logger.info(f"Invoking AI Engine at: {AI_ENGINE_PREDICT_URL}")
-    
-    try:
-        response = requests.post(
-            AI_ENGINE_PREDICT_URL,
-            json=metrics_data, # Gửi dữ liệu dưới dạng JSON
-            timeout=AI_ENGINE_TIMEOUT_SECONDS, # Đặt thời gian chờ để tránh Lambda bị treo
-            # auth=aws_auth # Bỏ comment dòng này nếu ALB của bạn được bảo vệ bằng IAM
-        )
-        response.raise_for_status()  # Ném HTTPError nếu phản hồi lỗi (4xx hoặc 5xx)
-        logger.info(f"AI Engine responded with status: {response.status_code}")
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to invoke AI Engine: {e}")
-        raise
 
-# Lưu input và phản hồi AI thành một object audit trong S3.
-# Lỗi audit chỉ được ghi log và không raise vì lỗi quan sát không nên chặn
-# luồng inference chính sau khi dự báo đã hoàn tất.
-def write_audit_log(input_data: dict, output_data: dict):
-    """Ghi một bản ghi kiểm toán (audit record) vào S3."""
-    load_config()
-    timestamp = datetime.now(timezone.utc)
-    audit_record = {
-        "invocation_time_utc": timestamp.isoformat(),
-        "source": "window-feeder",
-        "input_to_ai_engine": input_data,
-        "response_from_ai_engine": output_data,
+def _build_signal_window_row(row: dict) -> dict:
+    signal = {
+        "ts": row["time"],
+        "tenant_id": row.get("tenant_id") or "unknown",
+        "service_id": row.get("service_id") or "unknown",
+        "metric_type": row.get("metric_type") or "unknown",
+        "value": float(row["value"]),
     }
-    
-    # Sử dụng timestamp trong tên file (key) để đảm bảo tính duy nhất.
-    s3_key = f"{AUDIT_S3_PREFIX.strip('/')}/{timestamp.strftime('%Y/%m/%d/%H-%M-%S-%f')}.json"
-    
-    logger.info(f"Writing audit log to s3://{AUDIT_S3_BUCKET}/{s3_key}")
-    try:
-        s3_client.put_object(
-            Bucket=AUDIT_S3_BUCKET,
-            Key=s3_key,
-            Body=json.dumps(audit_record, indent=2),
-            ContentType="application/json"
-        )
-    except Exception as e:
-        logger.error(f"Failed to write audit log to S3: {e}")
-        # Không raise lỗi ở đây, vì việc ghi audit thất bại không nên làm dừng luồng xử lý chính.
 
-# Chỉ phát cảnh báo drift khi phản hồi AI đánh dấu rõ ràng drift_detected.
-# SNS topic sẽ phân phối cảnh báo đến các kênh thông báo như Slack hoặc quy trình on-call.
-def publish_drift_alert(ai_response: dict):
-    """Gửi cảnh báo độ lệch (drift) tới SNS nếu AI Engine phát hiện."""
+    labels = {}
+    if row.get("measure_name"):
+        labels["measure_name"] = row["measure_name"]
+    if "imputed" in row:
+        labels["imputed"] = row["imputed"]
+    if row.get("imputation_method"):
+        labels["imputation_method"] = row["imputation_method"]
+    if labels:
+        signal["labels"] = labels
+
+    return signal
+
+
+def build_ai_predict_requests(metrics_data: dict) -> list[dict]:
+    """Convert the internal metric window into AI API Contract v1 requests."""
     load_config()
-    if ai_response.get("drift_detected", False): # Kiểm tra có 'drift_detected' trong phản hồi của AI
-        message = {
-            "default": json.dumps(ai_response, indent=2),
-            "subject": f"Drift Detected in {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'window-feeder')}",
-            "message": f"AI Engine detected a drift. Details: \n{json.dumps(ai_response, indent=2)}"
+    rows = metrics_data.get("rows", [])
+    if not rows:
+        return []
+
+    signals_by_tenant = {}
+    for row in rows:
+        signal = _build_signal_window_row(row)
+        signals_by_tenant.setdefault(signal["tenant_id"], []).append(signal)
+
+    imputation = metrics_data.get("imputation", {})
+    start_ts = imputation.get("target_start")
+    end_ts = imputation.get("target_end")
+    if not start_ts or not end_ts:
+        parsed_times = [_parse_metric_timestamp(row["time"]) for row in rows if row.get("time")]
+        start_ts = _format_payload_timestamp(min(parsed_times))
+        end_ts = _format_payload_timestamp(max(parsed_times))
+
+    requests_to_send = []
+    for tenant_id, signal_window in sorted(signals_by_tenant.items()):
+        payload = {
+            "signal_window": signal_window,
+            "context": {
+                "deployment_version": DEPLOYMENT_VERSION,
+                "time_range": {
+                    "start_ts": start_ts,
+                    "end_ts": end_ts,
+                },
+            },
         }
-        logger.warning(f"Drift detected. Publishing alert to {DRIFT_ALERT_SNS_TOPIC_ARN}")
+        requests_to_send.append({
+            "tenant_id": tenant_id,
+            "correlation_id": str(uuid.uuid4()),
+            "payload": payload,
+        })
+
+    return requests_to_send
+
+
+def _sign_ai_engine_headers(url: str, body: str, headers: dict) -> dict:
+    session = boto3.Session()
+    credentials = session.get_credentials()
+    if credentials is None:
+        raise RuntimeError("AWS credentials are required to SigV4 sign AI Engine requests")
+
+    request = AWSRequest(
+        method="POST",
+        url=url,
+        data=body.encode("utf-8"),
+        headers=headers.copy(),
+    )
+    SigV4Auth(credentials.get_frozen_credentials(), AI_ENGINE_SIGV4_SERVICE, REGION).add_auth(request)
+    return dict(request.headers.items())
+
+
+def invoke_ai_engine(metrics_data: dict) -> dict:
+    """Post the prepared metric window to AI Engine /v1/predict."""
+    load_config()
+    logger.info("Invoking AI Engine at: %s", AI_ENGINE_PREDICT_URL)
+    predict_requests = build_ai_predict_requests(metrics_data)
+    responses = []
+
+    try:
+        for predict_request in predict_requests:
+            body = json.dumps(predict_request["payload"], separators=(",", ":"))
+            headers = {
+                "Content-Type": "application/json",
+                "X-Tenant-Id": predict_request["tenant_id"],
+                "X-Correlation-Id": predict_request["correlation_id"],
+            }
+            signed_headers = _sign_ai_engine_headers(AI_ENGINE_PREDICT_URL, body, headers)
+            request = urllib.request.Request(
+                AI_ENGINE_PREDICT_URL,
+                data=body.encode("utf-8"),
+                method="POST",
+                headers=signed_headers,
+            )
+
+            with urllib.request.urlopen(request, timeout=AI_ENGINE_TIMEOUT_SECONDS) as response:
+                status_code = response.getcode()
+                response_body = response.read().decode("utf-8")
+
+            logger.info("AI Engine responded with status %s for tenant %s", status_code, predict_request["tenant_id"])
+            ai_response = json.loads(response_body)
+            ai_response.setdefault("tenant_id", predict_request["tenant_id"])
+            ai_response.setdefault("correlation_id", predict_request["correlation_id"])
+            responses.append(ai_response)
+
+        if len(responses) == 1:
+            return responses[0]
+
+        return {
+            "responses": responses,
+            "anomaly": any(item.get("anomaly", False) for item in responses),
+            "drift_detected": any(
+                item.get("drift_detected", False) or item.get("anomaly", False)
+                for item in responses
+            ),
+        }
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        logger.error("AI Engine HTTP %d: %s", exc.code, body)
+        raise
+    except urllib.error.URLError as exc:
+        logger.error("Failed to invoke AI Engine: %s", exc)
+        raise
+
+
+def publish_drift_alert(ai_response: dict):
+    """Publish drift alerts returned by AI Engine."""
+    load_config()
+    if ai_response.get("drift_detected", False) or ai_response.get("anomaly", False):
+        message = {
+            "reason": "drift_detected",
+            "source": "window-feeder",
+            "details": ai_response,
+        }
+        logger.warning("Drift detected. Publishing alert to %s", DRIFT_ALERT_SNS_TOPIC_ARN)
         try:
             sns_client.publish(
                 TopicArn=DRIFT_ALERT_SNS_TOPIC_ARN,
-                Message=json.dumps({'default': json.dumps(message)}),
-                MessageStructure='json'
+                Subject=f"Drift Detected in {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'window-feeder')}",
+                Message=json.dumps(message, indent=2),
             )
-        except Exception as e:
-            logger.error(f"Failed to publish SNS alert: {e}")
+        except Exception as exc:
+            logger.error("Failed to publish SNS alert: %s", exc)
 
 
-# =================================================================
-# Handler chính của Lambda
-# =================================================================
-
-# Điểm vào của Lambda, được EventBridge gọi theo lịch đã cấu hình.
-# Hàm này điều phối toàn bộ workflow window-feeder: kiểm tra cờ điều khiển,
-# truy vấn metrics, dự báo AI, ghi audit và cảnh báo drift nếu cần.
-def handler(event, context):
-    """
-    Hàm xử lý chính của Lambda (entry point).
-    Điều phối toàn bộ quy trình: Kiểm tra Cổng -> Truy vấn -> Dự báo -> Ghi Audit -> Cảnh báo.
-    """
+def publish_window_feeder_failure(error: Exception, stage: str, event: dict):
+    """Publish AI/query failures so the Fail-Open Fallback Lambda can run."""
     load_config()
-    logger.info(f"Handler started. Event: {json.dumps(event)}")
+    message = {
+        "reason": "window_feeder_failed",
+        "source": "window-feeder",
+        "stage": stage,
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "event": event,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.warning("Publishing Window Feeder failure to %s", DRIFT_ALERT_SNS_TOPIC_ARN)
+    try:
+        sns_client.publish(
+            TopicArn=DRIFT_ALERT_SNS_TOPIC_ARN,
+            Subject="window_feeder_failed",
+            Message=json.dumps(message, indent=2, default=str),
+        )
+    except Exception as exc:
+        logger.error("Failed to publish Window Feeder failure alert: %s", exc)
 
-    # Bước 1: Kiểm tra "cổng" điều khiển hoạt động
+
+def handler(event, context):
+    """Lambda entry point invoked by EventBridge."""
+    load_config()
+    logger.info("Handler started. Event: %s", json.dumps(event))
+
     if not is_inference_enabled():
         logger.warning("Inference is disabled via SSM parameter. Exiting.")
         return {"statusCode": 200, "body": "Inference disabled."}
 
     try:
-        # Bước 2: Truy vấn dữ liệu chuỗi thời gian
-        metrics_data = query_timestream_metrics()
+        query_window = event.get("window") if isinstance(event, dict) else None
+        metrics_data = query_influxdb_metrics(window=query_window)
         if not metrics_data.get("rows"):
-            logger.warning("No metrics data returned from Timestream. Exiting.")
+            logger.warning("No metrics data returned from InfluxDB. Exiting.")
             return {"statusCode": 200, "body": "No metrics data."}
 
-        # Bước 3: Gọi đến AI Engine để dự báo
         ai_response = invoke_ai_engine(metrics_data)
-
-        # Bước 4: Ghi lại nhật ký kiểm toán (luôn thực hiện, dù dự báo thành công hay không)
-        write_audit_log(input_data=metrics_data, output_data=ai_response)
-
-        # Bước 5: Xử lý và gửi cảnh báo nếu có độ lệch
         publish_drift_alert(ai_response)
 
         logger.info("Handler finished successfully.")
         return {"statusCode": 200, "body": json.dumps(ai_response)}
 
-    except Exception as e:
-        # Xử lý mọi lỗi không mong muốn xảy ra trong quá trình thực thi
-        logger.critical(f"An unhandled error occurred in the handler: {e}", exc_info=True)
-        # Tùy chọn: bạn có thể gửi một cảnh báo lỗi tới SNS tại đây.
-        # Raise lại exception để AWS Lambda biết rằng lần thực thi này đã thất bại.
+    except Exception as exc:
+        logger.critical("Window Feeder failed: %s", exc, exc_info=True)
+        publish_window_feeder_failure(exc, stage="window_feeder", event=event if isinstance(event, dict) else {})
         raise
