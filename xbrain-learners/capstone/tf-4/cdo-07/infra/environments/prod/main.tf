@@ -29,6 +29,8 @@ module "networking" {
   vpc_cidr              = "10.2.0.0/16"
   private_subnet_cidr_a = "10.2.1.0/24"
   private_subnet_cidr_b = "10.2.2.0/24"
+  public_subnet_cidr_a  = "10.2.101.0/24"
+  public_subnet_cidr_b  = "10.2.102.0/24"
   enable_vpc_endpoints  = true
 
   tags = local.common_tags
