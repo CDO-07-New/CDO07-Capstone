@@ -27,6 +27,17 @@ module "cost_circuit_breaker" {
 }
 
 # =============================================================================
+# Layer 1.5 — Observability (Amazon Managed Grafana)
+# =============================================================================
+module "observability" {
+  source = "../../modules/observability"
+
+  project     = local.project
+  environment = local.environment
+  tags        = local.common_tags
+}
+
+# =============================================================================
 # Layer 2 — Networking (VPC, ALB, VPC Endpoints, Security Groups)
 # =============================================================================
 module "networking" {
@@ -36,6 +47,8 @@ module "networking" {
   vpc_cidr              = "10.1.0.0/16"
   private_subnet_cidr_a = "10.1.1.0/24"
   private_subnet_cidr_b = "10.1.2.0/24"
+  public_subnet_cidr_a  = "10.1.101.0/24"
+  public_subnet_cidr_b  = "10.1.102.0/24"
   enable_vpc_endpoints  = true
 
   tags = local.common_tags

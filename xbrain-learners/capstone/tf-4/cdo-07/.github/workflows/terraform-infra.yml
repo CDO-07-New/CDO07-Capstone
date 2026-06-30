@@ -1,0 +1,169 @@
+name: Terraform Infrastructure
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-infra.yml'
+  pull_request:
+    paths:
+      - 'infra/**'
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.10.0
+
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [sandbox, staging, prod]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Terraform Format Check
+        working-directory: infra/environments/${{ matrix.environment }}
+        run: terraform fmt -check -recursive
+      
+      - name: Terraform Init
+        working-directory: infra/environments/${{ matrix.environment }}
+        run: terraform init -backend-config=backend.hcl
+      
+      - name: Terraform Validate
+        working-directory: infra/environments/${{ matrix.environment }}
+        run: terraform validate
+      
+      - name: Terraform Plan
+        working-directory: infra/environments/${{ matrix.environment }}
+        run: |
+          terraform plan \
+            -out=tfplan-${{ matrix.environment }} \
+            -lock=true
+      
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: infra/environments/${{ matrix.environment }}/tfplan-${{ matrix.environment }}
+
+  terraform-apply-sandbox:
+    name: Apply to Sandbox
+    needs: terraform-plan
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment:
+      name: sandbox
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-sandbox
+          path: infra/environments/sandbox/
+      
+      - name: Terraform Init
+        working-directory: infra/environments/sandbox
+        run: terraform init -backend-config=backend.hcl
+      
+      - name: Terraform Apply
+        working-directory: infra/environments/sandbox
+        run: terraform apply -auto-approve tfplan-sandbox
+
+  terraform-apply-staging:
+    name: Apply to Staging
+    needs: terraform-plan
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-staging
+          path: infra/environments/staging/
+      
+      - name: Terraform Init
+        working-directory: infra/environments/staging
+        run: terraform init -backend-config=backend.hcl
+      
+      - name: Terraform Apply
+        working-directory: infra/environments/staging
+        run: terraform apply -auto-approve tfplan-staging
+
+  terraform-apply-prod:
+    name: Apply to Production
+    needs: terraform-plan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://grafana.cdo-07.example.com
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-prod
+          path: infra/environments/prod/
+      
+      - name: Terraform Init
+        working-directory: infra/environments/prod
+        run: terraform init -backend-config=backend.hcl
+      
+      - name: Terraform Apply
+        working-directory: infra/environments/prod
+        run: terraform apply -auto-approve tfplan-prod

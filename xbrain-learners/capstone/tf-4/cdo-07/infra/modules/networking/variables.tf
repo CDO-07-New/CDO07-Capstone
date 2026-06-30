@@ -22,6 +22,18 @@ variable "private_subnet_cidr_b" {
   default     = "10.0.2.0/24"
 }
 
+variable "public_subnet_cidr_a" {
+  description = "CIDR block for the first Public Subnet (AZ-a) - For internet-facing ALB"
+  type        = string
+  default     = "10.0.101.0/24"
+}
+
+variable "public_subnet_cidr_b" {
+  description = "CIDR block for the second Public Subnet (AZ-b) - Required for ALB multi-AZ"
+  type        = string
+  default     = "10.0.102.0/24"
+}
+
 variable "enable_vpc_endpoints" {
   description = "Create VPC Interface and Gateway Endpoints. Set to false in sandbox to reduce cost."
   type        = bool

@@ -5,18 +5,18 @@ module "alb" {
   name                       = "${local.name}-alb"
   load_balancer_type         = "application"
   vpc_id                     = module.vpc.vpc_id
-  subnets                    = module.vpc.private_subnets
-  internal                   = true # No public subnet available, must be internal
+  subnets                    = module.vpc.public_subnets
+  internal                   = false # Internet-facing for external load testing (K6, GitHub Actions)
   enable_deletion_protection = false
 
-  # Security group for ALB allowing HTTP traffic from VPC CIDR
+  # Security group for ALB allowing HTTP traffic from Internet for testing
   security_group_ingress_rules = {
     all_http = {
       from_port   = 80
       to_port     = 80
       ip_protocol = "tcp"
-      description = "HTTP web traffic"
-      cidr_ipv4   = module.vpc.vpc_cidr_block
+      description = "HTTP web traffic from Internet (for K6 load testing)"
+      cidr_ipv4   = "0.0.0.0/0"
     }
   }
   security_group_egress_rules = {
