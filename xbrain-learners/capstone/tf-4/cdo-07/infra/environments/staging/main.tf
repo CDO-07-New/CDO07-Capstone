@@ -27,6 +27,17 @@ module "cost_circuit_breaker" {
 }
 
 # =============================================================================
+# Layer 1.5 — Observability (Amazon Managed Grafana)
+# =============================================================================
+module "observability" {
+  source = "../../modules/observability"
+
+  project     = local.project
+  environment = local.environment
+  tags        = local.common_tags
+}
+
+# =============================================================================
 # Layer 2 — Networking (VPC, ALB, VPC Endpoints, Security Groups)
 # =============================================================================
 module "networking" {

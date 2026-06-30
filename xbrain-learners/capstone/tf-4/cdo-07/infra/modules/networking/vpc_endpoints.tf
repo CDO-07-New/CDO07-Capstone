@@ -29,6 +29,15 @@ locals {
     secretsmanager = {
       service = "secretsmanager"
     }
+    sns = {
+      service = "sns"
+    }
+    grafana = {
+      service = "grafana"
+    }
+    grafana_workspace = {
+      service = "grafana-workspace"
+    }
   }
 }
 
