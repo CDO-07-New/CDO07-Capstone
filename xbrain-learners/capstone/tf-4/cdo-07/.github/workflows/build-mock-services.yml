@@ -1,0 +1,196 @@
+name: Build & Push Mock Services
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'mock-services/**'
+      - '.github/workflows/build-mock-services.yml'
+  pull_request:
+    paths:
+      - 'mock-services/**'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      payment-gw: ${{ steps.filter.outputs.payment-gw }}
+      ledger-svc: ${{ steps.filter.outputs.ledger-svc }}
+      fraud-detection: ${{ steps.filter.outputs.fraud-detection }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            payment-gw:
+              - 'mock-services/payment-gw/**'
+            ledger-svc:
+              - 'mock-services/ledger-svc/**'
+            fraud-detection:
+              - 'mock-services/fraud-detection/**'
+
+  build-payment-gw:
+    name: Build Payment Gateway
+    needs: detect-changes
+    if: needs.detect-changes.outputs.payment-gw == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mock-services/payment-gw
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/cdo-07-payment-gw:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/cdo-07-payment-gw:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-ledger-svc:
+    name: Build Ledger Service
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ledger-svc == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mock-services/ledger-svc
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/cdo-07-ledger-svc:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/cdo-07-ledger-svc:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-fraud-detection:
+    name: Build Fraud Detection
+    needs: detect-changes
+    if: needs.detect-changes.outputs.fraud-detection == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mock-services/fraud-detection
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/cdo-07-fraud-detection:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/cdo-07-fraud-detection:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-to-ecs:
+    name: Deploy to ECS
+    needs: [build-payment-gw, build-ledger-svc, build-fraud-detection]
+    if: |
+      always() && 
+      github.ref == 'refs/heads/develop' &&
+      (needs.build-payment-gw.result == 'success' || needs.build-payment-gw.result == 'skipped') &&
+      (needs.build-ledger-svc.result == 'success' || needs.build-ledger-svc.result == 'skipped') &&
+      (needs.build-fraud-detection.result == 'success' || needs.build-fraud-detection.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Force new deployment (Payment GW)
+        if: needs.detect-changes.outputs.payment-gw == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster sandbox-mock-services \
+            --service payment-gw \
+            --force-new-deployment
+      
+      - name: Force new deployment (Ledger Svc)
+        if: needs.detect-changes.outputs.ledger-svc == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster sandbox-mock-services \
+            --service ledger-svc \
+            --force-new-deployment
+      
+      - name: Force new deployment (Fraud Detection)
+        if: needs.detect-changes.outputs.fraud-detection == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster sandbox-mock-services \
+            --service fraud-detection \
+            --force-new-deployment
+      
+      - name: Wait for deployment
+        run: |
+          echo "Waiting for ECS services to stabilize..."
+          sleep 60
+          
+          aws ecs wait services-stable \
+            --cluster sandbox-mock-services \
+            --services payment-gw ledger-svc fraud-detection
+      
+      - name: Smoke test
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names cdo-07-sandbox-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+          
+          # Internal ALB - skip smoke test if not accessible
+          echo "ALB DNS: $ALB_DNS"
+          echo "⚠️  ALB is internal - smoke test requires VPC access"

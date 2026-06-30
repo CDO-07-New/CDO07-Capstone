@@ -107,3 +107,23 @@ resource "aws_vpc_security_group_egress_rule" "lambda_to_influxdb" {
   ip_protocol                  = "tcp"
   referenced_security_group_id = aws_security_group.influxdb.id
 }
+
+# Lambda egress to ALB port 80 (Window Feeder → AI Engine)
+resource "aws_vpc_security_group_egress_rule" "lambda_to_alb" {
+  security_group_id            = aws_security_group.lambda.id
+  description                  = "HTTP to ALB for AI Engine predict endpoint (Window Feeder)"
+  from_port                    = 80
+  to_port                      = 80
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = module.alb.security_group_id
+}
+
+# ALB ingress from Lambda (Window Feeder calling AI Engine)
+resource "aws_vpc_security_group_ingress_rule" "alb_from_lambda" {
+  security_group_id            = module.alb.security_group_id
+  description                  = "HTTP from Lambda Window Feeder to AI Engine"
+  from_port                    = 80
+  to_port                      = 80
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.lambda.id
+}

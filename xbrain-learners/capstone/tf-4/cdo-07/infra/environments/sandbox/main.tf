@@ -29,6 +29,8 @@ module "networking" {
   vpc_cidr              = "10.0.0.0/16"
   private_subnet_cidr_a = "10.0.1.0/24"
   private_subnet_cidr_b = "10.0.2.0/24"
+  public_subnet_cidr_a  = "10.0.101.0/24"
+  public_subnet_cidr_b  = "10.0.102.0/24"
   enable_vpc_endpoints  = true
 
   tags = local.common_tags
@@ -102,6 +104,12 @@ module "mock_services" {
   kinesis_stream_arn    = module.streaming.stream_arn
   kinesis_stream_name   = module.streaming.stream_name
   kms_key_arn           = local.kms_key_arn
+  
+  # ECR Image URIs - Real mock services instead of nginx placeholders
+  ecr_image_uri_payment = local.ecr_image_uri_payment
+  ecr_image_uri_ledger  = local.ecr_image_uri_ledger
+  ecr_image_uri_fraud   = local.ecr_image_uri_fraud
+  
   tags                  = local.common_tags
 }
 
@@ -170,9 +178,10 @@ module "window_feeder" {
     INFLUXDB_QUERY_WINDOW            = "2h"
     METRIC_WINDOW_STEP_SECONDS       = "300"
     FORWARD_FILL_LOOKBACK_SECONDS    = "900"
+    # AI Engine URL - Direct to Internal ALB (SG-to-SG authorization)
     AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
-    AI_ENGINE_SIGV4_SERVICE          = "execute-api"
+    AI_ENGINE_SIGV4_SERVICE          = "ecs"
     DEPLOYMENT_VERSION               = "${local.project}-${local.environment}"
     BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
     INFERENCE_ENABLED_PARAMETER_NAME = "/${local.project}/${local.environment}/inference_enabled"

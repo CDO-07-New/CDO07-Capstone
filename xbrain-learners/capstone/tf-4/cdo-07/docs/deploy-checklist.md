@@ -89,9 +89,9 @@ Chạy `terraform output` và ghi lại:
 | `terraform_state_kms_key_arn` | `____________________` | Ghi nhớ |
 | `github_plan_role_arn` | `____________________` | → GitHub var `AWS_PLAN_ROLE_ARN` |
 | `github_deploy_role_arn` | `____________________` | → GitHub var `AWS_DEPLOY_ROLE_ARN` |
-| `ecr_repository_urls.ingest-service` | `____________________` | |
-| `ecr_repository_urls.ingest-worker` | `____________________` | |
-| `ecr_repository_urls.ai-serving` | `____________________` | |
+| `ecr_repository_urls.payment-gw` | `____________________` | Mock service Payment Gateway |
+| `ecr_repository_urls.ledger-svc` | `____________________` | Mock service Ledger |
+| `ecr_repository_urls.fraud-detection` | `____________________` | Mock service Fraud Detection |
 
 
 ### 1.4 Cấu hình GitHub Actions
@@ -122,6 +122,82 @@ Vào repo → Settings → Secrets and Variables → Actions:
 | ⬜ | OIDC provider tồn tại | `aws iam list-open-id-connect-providers` |
 | ⬜ | 3 ECR repos tồn tại: `ingest-service`, `ingest-worker`, `ai-serving` | `aws ecr describe-repositories --query 'repositories[].repositoryName'` |
 | ⬜ | IAM roles tồn tại: `tf4-cdo07-github-plan-role`, `tf4-cdo07-github-deploy-role` | `aws iam list-roles --query 'Roles[?contains(RoleName,\`tf4-cdo07\`)].RoleName'` |
+
+---
+
+## PHASE 1.5 — Build Mock Service Docker Images
+
+> **⚠️ BẮT BUỘC: Phải build và push images VÀO ECR TRƯỚC KHI terraform apply**
+
+### 1.5.1 Create ECR Repositories
+
+```bash
+# Create 3 ECR repositories for mock services
+aws ecr create-repository --repository-name cdo-07-payment-gw --region us-east-1
+aws ecr create-repository --repository-name cdo-07-ledger-svc --region us-east-1
+aws ecr create-repository --repository-name cdo-07-fraud-detection --region us-east-1
+```
+
+| # | Repository | Status |
+|---|---|---|
+| ⬜ | `cdo-07-payment-gw` | Created |
+| ⬜ | `cdo-07-ledger-svc` | Created |
+| ⬜ | `cdo-07-fraud-detection` | Created |
+
+### 1.5.2 Build and Push Docker Images
+
+```bash
+# Get AWS account ID
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REGION="us-east-1"
+
+# Login to ECR
+aws ecr get-login-password --region $REGION | \
+  docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com
+
+# Navigate to mock services directory
+cd xbrain-learners/capstone/tf-4/cdo-07/mock-services
+
+# Build Payment Gateway
+cd payment-gw
+docker build -t cdo-07-payment-gw:latest .
+docker tag cdo-07-payment-gw:latest ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-payment-gw:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-payment-gw:latest
+
+# Build Ledger Service
+cd ../ledger-svc
+docker build -t cdo-07-ledger-svc:latest .
+docker tag cdo-07-ledger-svc:latest ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-ledger-svc:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-ledger-svc:latest
+
+# Build Fraud Detection
+cd ../fraud-detection
+docker build -t cdo-07-fraud-detection:latest .
+docker tag cdo-07-fraud-detection:latest ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-fraud-detection:latest
+docker push ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-fraud-detection:latest
+
+cd ../..
+```
+
+| # | Image | Verify | Status |
+|---|---|---|---|
+| ⬜ | payment-gw | `aws ecr describe-images --repository-name cdo-07-payment-gw \| jq '.imageDetails[0].imageTags'` | |
+| ⬜ | ledger-svc | `aws ecr describe-images --repository-name cdo-07-ledger-svc \| jq '.imageDetails[0].imageTags'` | |
+| ⬜ | fraud-detection | `aws ecr describe-images --repository-name cdo-07-fraud-detection \| jq '.imageDetails[0].imageTags'` | |
+
+### 1.5.3 Verify Image Contents
+
+```bash
+# Pull and inspect one image to verify it works
+docker pull ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-payment-gw:latest
+docker run --rm ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/cdo-07-payment-gw:latest node --version
+```
+
+| # | Check | Expected | Status |
+|---|---|---|---|
+| ⬜ | Image contains Node.js | Node version printed | |
+| ⬜ | Image has app.js | `docker run --rm <image> ls -la` shows app.js | |
+| ⬜ | Image has dependencies | node_modules exists | |
 
 ---
 
@@ -266,6 +342,64 @@ curl -s \
 
 ## PHASE 4 — Sandbox Deploy (môi trường test đầu tiên)
 
+### 4.0 Pre-deployment Configuration Updates
+
+**⚠️ QUAN TRỌNG: Cập nhật các config sau TRƯỚC KHI `terraform plan`**
+
+#### 4.0.1 Update Public Subnet Variables
+
+Edit `infra/environments/sandbox/main.tf`:
+
+```hcl
+module "networking" {
+  source = "../../modules/networking"
+
+  vpc_name              = "cdo-07-sandbox-vpc"
+  vpc_cidr              = "10.0.0.0/16"
+  private_subnet_cidr_a = "10.0.1.0/24"
+  private_subnet_cidr_b = "10.0.2.0/24"
+  public_subnet_cidr_a  = "10.0.101.0/24"  # ← THÊM DÒNG NÀY
+  public_subnet_cidr_b  = "10.0.102.0/24"  # ← THÊM DÒNG NÀY
+  enable_vpc_endpoints  = true
+
+  tags = local.common_tags
+}
+```
+
+| # | Kiểm tra | |
+|---|---|---|
+| ⬜ | Added `public_subnet_cidr_a = "10.0.101.0/24"` | |
+| ⬜ | Added `public_subnet_cidr_b = "10.0.102.0/24"` | |
+
+#### 4.0.2 Update ECR Image URIs
+
+Edit `infra/environments/sandbox/locals.tf`:
+
+```hcl
+# Verify these URIs match your ECR repositories
+ecr_image_uri_payment = "${local.ecr_account_id}.dkr.ecr.${local.ecr_region}.amazonaws.com/cdo-07-payment-gw:latest"
+ecr_image_uri_ledger  = "${local.ecr_account_id}.dkr.ecr.${local.ecr_region}.amazonaws.com/cdo-07-ledger-svc:latest"
+ecr_image_uri_fraud   = "${local.ecr_account_id}.dkr.ecr.${local.ecr_region}.amazonaws.com/cdo-07-fraud-detection:latest"
+```
+
+| # | Kiểm tra | Command |
+|---|---|---|
+| ⬜ | ECR URIs correct | `aws ecr describe-repositories --query 'repositories[].repositoryName'` |
+| ⬜ | Images exist in ECR | `aws ecr describe-images --repository-name cdo-07-payment-gw` |
+
+#### 4.0.3 Update KMS Key ARN
+
+Edit `infra/environments/sandbox/locals.tf`:
+
+```hcl
+kms_key_arn = "arn:aws:kms:us-east-1:${data.aws_caller_identity.current.account_id}:key/<YOUR_KEY_ID>"
+```
+
+| # | Kiểm tra | Command |
+|---|---|---|
+| ⬜ | KMS key exists | `aws kms describe-key --key-id alias/tf4-cdo07-bootstrap` |
+| ⬜ | Key ARN updated in locals.tf | Copy ARN from bootstrap output |
+
 ### 4.1 Terraform validate
 
 ```bash
@@ -291,14 +425,17 @@ terraform plan -out=sandbox.tfplan
 |---|---|---|
 | ⬜ | Không có `destroy` ngoài ý muốn | |
 | ⬜ | KMS key alias `tf4-cdo07-bootstrap` resolve được (data source) | |
-| ⬜ | Module `networking` — VPC `10.0.0.0/16`, 2 private subnets, VPC endpoints | |
+| ⬜ | Module `networking` — VPC `10.0.0.0/16`, **2 private + 2 public subnets**, VPC endpoints | ✅ |
+| ⬜ | ALB — **internet-facing** (internal=false) trong **public subnets** | ✅ |
+| ⬜ | Security Groups — Lambda → ALB rule exists | ✅ |
 | ⬜ | Module `streaming` — 1 Kinesis stream, KMS encrypted | |
 | ⬜ | Module `cost_circuit_breaker` — SSM param `/tf4-cdo07/sandbox/inference_enabled` = `true` | |
 | ⬜ | Module `transformer` — Lambda function + event source mapping | |
 | ⬜ | Module `window_feeder` — Lambda + EventBridge rule `rate(5 minutes)` | |
 | ⬜ | Module `fail_open_fallback` — Lambda + SNS subscription | |
 | ⬜ | Module `ai_engine` — ECS task definition/service | |
-| ⬜ | Module `mock_services` — 3 ECS services (payment-gw, ledger, fraud) | |
+| ⬜ | Module `mock_services` — 3 ECS services (payment-gw, ledger-svc, fraud-detection) | ✅ |
+| ⬜ | InfluxDB instance — db.influx.medium, 20GB storage | |
 | ⬜ | Không có resource nào reference file ZIP chưa tồn tại | |
 
 ### 4.3 Apply sandbox
@@ -330,9 +467,79 @@ terraform apply sandbox.tfplan
 | ⬜ | Invoke Window Feeder thủ công | `aws lambda invoke --function-name tf4-cdo07-sandbox-window-feeder --payload '{"source":"manual"}' /tmp/out.json` | `statusCode: 200` |
 | ⬜ | Audit log xuất hiện trong S3 | `aws s3 ls s3://<audit-bucket>/window-feeder/ --recursive` | `.json` file |
 | ⬜ | Invoke Fail-Open Fallback thủ công | `aws lambda invoke --function-name tf4-cdo07-sandbox-fail-open-fallback --payload '{}' /tmp/out.json` | `statusCode: 200` |
-| ⬜ | Mock services ECS tasks running | `aws ecs list-tasks --cluster tf4-cdo07-sandbox` | 3 tasks running |
-| ⬜ | AI Engine ALB health check | `curl http://<alb-dns>/health` | HTTP 200 |
+| ⬜ | Mock services ECS tasks running | `aws ecs list-tasks --cluster cdo-07-sandbox-ecs` | 4 tasks (3 mock + 1 AI engine) |
+| ⬜ | Mock services health checks | `curl http://<alb-dns>/payment/health`, `/ledger/health`, `/fraud/health` | All return HTTP 200 |
+| ⬜ | AI Engine ALB health check | `curl http://<alb-dns>/v1/health` | HTTP 200 |
 | ⬜ | AI Engine predict endpoint | `curl -X POST http://<alb-dns>/v1/predict -d '{"rows":[]}'` | JSON response |
+
+### 4.5 Verify ALB Configuration
+
+**⚠️ QUAN TRỌNG: Kiểm tra ALB name và accessibility**
+
+```bash
+# ALB name should be: cdo-07-sandbox-vpc-alb (NOT cdo-07-sandbox-alb)
+aws elbv2 describe-load-balancers \
+  --names cdo-07-sandbox-vpc-alb \
+  --query 'LoadBalancers[0].{Scheme:Scheme,DNS:DNSName}' \
+  --output table
+```
+
+| # | Kiểm tra | Expected | Status |
+|---|---|---|---|
+| ⬜ | ALB name | `cdo-07-sandbox-vpc-alb` | ✅ |
+| ⬜ | ALB scheme | `internet-facing` | ✅ |
+| ⬜ | ALB subnets | 2 public subnets | ✅ |
+| ⬜ | ALB security group | Allows 0.0.0.0/0:80 | ✅ |
+| ⬜ | Test from Internet | `curl http://<alb-dns>/payment/health` from local machine | Should work |
+
+### 4.6 K6 Load Test Verification
+
+**Test K6 can connect to ALB from GitHub Actions**
+
+```bash
+# Verify K6 workflow uses correct ALB name
+cat .github/workflows/k6-load-tests.yml | grep "cdo-07-.*-vpc-alb"
+```
+
+| # | Kiểm tra | Expected | Status |
+|---|---|---|---|
+| ⬜ | K6 workflow ALB name | `cdo-07-${ENV}-vpc-alb` | ✅ Fixed |
+| ⬜ | Manual K6 test from local | `cd k6-tests && k6 run -e ALB_DNS=http://<alb-dns> scenario-1-gradual-drift.js` | Connects successfully |
+
+---
+
+## PHASE 4.7 — Post-Deployment Health Checks
+
+### Mock Services Telemetry Flow
+
+```bash
+# Test full telemetry pipeline
+ALB_DNS=$(cd infra/environments/sandbox && terraform output -raw alb_dns_name)
+
+# 1. Send request to mock service
+curl -X POST http://$ALB_DNS/payment/authorize \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 100, "currency": "USD", "customer_id": "test-123"}'
+
+# 2. Wait 30-60 seconds, then check Transformer logs
+aws logs tail /aws/lambda/tf4-cdo07-sandbox-transformer --since 2m
+
+# 3. Check InfluxDB has data
+# (Use script from Phase 3.4 to query InfluxDB)
+
+# 4. Wait 5 minutes, check Window Feeder logs
+aws logs tail /aws/lambda/tf4-cdo07-sandbox-window-feeder --since 10m
+```
+
+| # | Check | Expected | Status |
+|---|---|---|---|
+| ⬜ | Mock service responds | HTTP 200 with transaction_id | |
+| ⬜ | Kinesis receives records | Check Kinesis metrics | |
+| ⬜ | Transformer processes | Log: "Processed X records" | |
+| ⬜ | InfluxDB has data | Query returns rows | |
+| ⬜ | Window Feeder runs | Log: "Querying InfluxDB" | |
+| ⬜ | AI Engine called | Log: "Calling AI Engine" | |
+| ⬜ | Audit log created | S3 bucket has new file | |
 
 ---
 
