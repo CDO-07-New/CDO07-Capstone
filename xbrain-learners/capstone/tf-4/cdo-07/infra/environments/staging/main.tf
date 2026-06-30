@@ -180,7 +180,7 @@ module "window_feeder" {
   runtime              = "python3.12"
   timeout_seconds      = 30
   memory_mb            = 256
-  reserved_concurrency = 1
+  reserved_concurrency = -1 # staging: use unreserved concurrency pool
 
   subnet_ids         = module.networking.private_subnets
   security_group_ids = [module.networking.lambda_security_group_id]
