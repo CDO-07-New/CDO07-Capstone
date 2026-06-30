@@ -203,14 +203,14 @@ resource "random_password" "influxdb" {
 # ---------------------------------------------------------------------------
 #checkov:skip=CKV_AWS_354:Multi-AZ not required for capstone Single-AZ design (02_infra_design §2).
 resource "aws_timestreaminfluxdb_db_instance" "main" {
-  name                  = local.influxdb_name
-  db_instance_type      = var.influxdb_db_instance_type
-  allocated_storage     = var.influxdb_allocated_storage
-  username              = var.influxdb_username
-  password              = var.influxdb_password != null ? var.influxdb_password : random_password.influxdb.result
-  bucket                = var.influxdb_bucket
-  organization          = var.influxdb_org
-  publicly_accessible   = var.influxdb_publicly_accessible
+  name                = local.influxdb_name
+  db_instance_type    = var.influxdb_db_instance_type
+  allocated_storage   = var.influxdb_allocated_storage
+  username            = var.influxdb_username
+  password            = var.influxdb_password != null ? var.influxdb_password : random_password.influxdb.result
+  bucket              = var.influxdb_bucket
+  organization        = var.influxdb_org
+  publicly_accessible = var.influxdb_publicly_accessible
 
   # VPC placement — must be in private subnets (03_security_design §1.3)
   vpc_subnet_ids         = var.influxdb_subnet_ids
