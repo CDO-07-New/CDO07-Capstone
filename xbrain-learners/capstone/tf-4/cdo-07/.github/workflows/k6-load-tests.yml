@@ -11,25 +11,52 @@ on:
           - sandbox
           - staging
       scenario:
-        description: 'Test scenario'
+        description: 'Test scenario (Note: "all" will take 8+ hours and may timeout)'
         required: true
         type: choice
         options:
-          - all
           - scenario-1-gradual-drift
           - scenario-2-sudden-spike
           - scenario-3-slow-leak
           - scenario-4-noisy-baseline
+          - all
   schedule:
-    # Run weekly on Sunday at 2 AM UTC
-    - cron: '0 2 * * 0'
+    # Run each scenario separately to avoid 6h timeout
+    # Scenario 1: Monday 2 AM UTC
+    - cron: '0 2 * * 1'
+    # Scenario 2: Tuesday 2 AM UTC  
+    - cron: '0 2 * * 2'
+    # Scenario 3: Wednesday 2 AM UTC
+    - cron: '0 2 * * 3'
+    # Scenario 4: Thursday 2 AM UTC
+    - cron: '0 2 * * 4'
 
 jobs:
   k6-test:
     name: Run K6 Load Test
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max per job
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Determine scenario from schedule
+        id: scenario
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Map cron schedule to scenario
+            DAY=$(date +%u)  # 1=Monday, 2=Tuesday, etc.
+            case $DAY in
+              1) SCENARIO="scenario-1-gradual-drift" ;;
+              2) SCENARIO="scenario-2-sudden-spike" ;;
+              3) SCENARIO="scenario-3-slow-leak" ;;
+              4) SCENARIO="scenario-4-noisy-baseline" ;;
+              *) SCENARIO="scenario-1-gradual-drift" ;;
+            esac
+          else
+            SCENARIO="${{ github.event.inputs.scenario }}"
+          fi
+          echo "scenario=$SCENARIO" >> $GITHUB_OUTPUT
+          echo "Running scenario: $SCENARIO"
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -41,7 +68,7 @@ jobs:
         id: alb
         run: |
           ENV="${{ github.event.inputs.environment || 'sandbox' }}"
-          ALB_NAME="cdo-07-${ENV}-alb"
+          ALB_NAME="cdo-07-${ENV}-vpc-alb"
           
           ALB_DNS=$(aws elbv2 describe-load-balancers \
             --names $ALB_NAME \
@@ -60,7 +87,7 @@ jobs:
           sudo apt-get install k6
       
       - name: Run K6 Test - Scenario 1
-        if: github.event.inputs.scenario == 'scenario-1-gradual-drift' || github.event.inputs.scenario == 'all'
+        if: steps.scenario.outputs.scenario == 'scenario-1-gradual-drift' || steps.scenario.outputs.scenario == 'all'
         working-directory: k6-tests
         env:
           ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
@@ -71,7 +98,7 @@ jobs:
             scenario-1-gradual-drift.js
       
       - name: Run K6 Test - Scenario 2
-        if: github.event.inputs.scenario == 'scenario-2-sudden-spike' || github.event.inputs.scenario == 'all'
+        if: steps.scenario.outputs.scenario == 'scenario-2-sudden-spike' || steps.scenario.outputs.scenario == 'all'
         working-directory: k6-tests
         env:
           ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
@@ -82,7 +109,7 @@ jobs:
             scenario-2-sudden-spike.js
       
       - name: Run K6 Test - Scenario 3
-        if: github.event.inputs.scenario == 'scenario-3-slow-leak' || github.event.inputs.scenario == 'all'
+        if: steps.scenario.outputs.scenario == 'scenario-3-slow-leak' || steps.scenario.outputs.scenario == 'all'
         working-directory: k6-tests
         env:
           ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
@@ -93,7 +120,7 @@ jobs:
             scenario-3-slow-leak.js
       
       - name: Run K6 Test - Scenario 4
-        if: github.event.inputs.scenario == 'scenario-4-noisy-baseline' || github.event.inputs.scenario == 'all'
+        if: steps.scenario.outputs.scenario == 'scenario-4-noisy-baseline' || steps.scenario.outputs.scenario == 'all'
         working-directory: k6-tests
         env:
           ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
@@ -116,7 +143,10 @@ jobs:
           echo "## K6 Load Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ github.event.inputs.environment || 'sandbox' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Scenario:** ${{ github.event.inputs.scenario || 'all' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Scenario:** ${{ steps.scenario.outputs.scenario }}" >> $GITHUB_STEP_SUMMARY
           echo "**Run ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📊 Test results available in artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Note:** Running all scenarios sequentially may exceed 6h GitHub Actions timeout." >> $GITHUB_STEP_SUMMARY
+          echo "For full test suite, trigger each scenario separately or use scheduled runs." >> $GITHUB_STEP_SUMMARY

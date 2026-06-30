@@ -1,298 +1,278 @@
-# K6 Load Tests - Foresight Lens TF4
+# K6 Load Testing Guide
 
-Load testing scenarios để test AI Engine drift detection capabilities.
+## 📊 Test Scenarios Overview
 
-## 📋 Test Scenarios Overview
+| Scenario | Duration | Load Pattern | Purpose | Detection Target |
+|----------|----------|--------------|---------|------------------|
+| **1. Gradual Drift** | 2h | 50→100→150 RPS | Memory leak simulation | Memory utilization upward trend |
+| **2. Sudden Spike** | 2h | 100→500→100 RPS | Traffic surge | CPU spike, latency spike |
+| **3. Slow Leak** | 2.5h | 100 RPS steady | Connection leak | Active connections trend |
+| **4. Noisy Baseline** | 2h | 80-120 RPS random | Normal variation | Baseline establishment |
 
-| Scenario | Duration | Pattern | Detection Target | Expected Lead Time |
-|----------|----------|---------|------------------|-------------------|
-| **1. Gradual Drift** | 2h | 50→100→150 RPS gradual | Memory leak, slow degradation | ≥15 min |
-| **2. Sudden Spike** | 2h | 100→500 RPS in 2 min | Traffic surge, Black Friday | Immediate |
-| **3. Slow Leak** | 2.5h | Constant 100 RPS, growing payload | Resource exhaustion | ≥15 min |
-| **4. Noisy Baseline** | 2h | 80-320 RPS random | False positive filtering | N/A |
+**Total Test Coverage:** 8.5 hours across all scenarios
 
-## 🎯 Requirements Mapping
+---
 
-Test scenarios fulfill hard requirements:
-- ✅ Test window ≥2h (all scenarios)
-- ✅ Lead time ≥15 min (scenarios 1, 3)
-- ✅ Multi-tenant ≥3 services (payment-gw, ledger-svc, fraud-detection)
-- ✅ FP rate ≤12% (scenario 4 validates)
-- ✅ Catch ≥80% drift (all scenarios)
+## 🚀 Running Tests
 
-## 🚀 Prerequisites
+### **Option 1: GitHub Actions (Recommended for CI/CD)**
 
-### 1. Install k6
+#### **Manual Trigger** (Web UI)
+1. Go to: `Actions` → `K6 Load Tests` → `Run workflow`
+2. Select:
+   - **Environment**: `sandbox` or `staging`
+   - **Scenario**: Choose one scenario (or `all` with caution)
+3. Click `Run workflow`
 
+#### **Scheduled Automatic Runs**
+Tests run automatically via cron:
+- **Monday 2 AM UTC**: Scenario 1 (Gradual Drift)
+- **Tuesday 2 AM UTC**: Scenario 2 (Sudden Spike)
+- **Wednesday 2 AM UTC**: Scenario 3 (Slow Leak)
+- **Thursday 2 AM UTC**: Scenario 4 (Noisy Baseline)
+
+#### **⚠️ GitHub Actions Limitations**
+- **Timeout**: 6 hours max per job
+- **Running all scenarios**: May timeout (8.5h total)
+- **Solution**: Run scenarios individually or use scheduled runs
+- **Cost**: 
+  - Public repo: 2000 free minutes/month
+  - Private repo: $0.008/minute (~$10/scenario)
+
+---
+
+### **Option 2: Local Execution**
+
+#### **Prerequisites**
 ```bash
-# Windows (Chocolatey)
-choco install k6
-
-# macOS (Homebrew)
+# Install K6
+# macOS
 brew install k6
 
+# Windows
+choco install k6
+
 # Linux
-sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+sudo gpg -k
+sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+  --keyserver hkp://keyserver.ubuntu.com:80 \
+  --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | \
+  sudo tee /etc/apt/sources.list.d/k6.list
 sudo apt-get update
 sudo apt-get install k6
 ```
 
-### 2. Get ALB DNS Name
-
+#### **Get ALB DNS**
 ```bash
-cd ../infra/environments/sandbox
-terraform output alb_dns_name
+# Set environment
+ENV="sandbox"  # or "staging"
+
+# Get ALB DNS from AWS
+aws elbv2 describe-load-balancers \
+  --names "cdo-07-${ENV}-alb" \
+  --query 'LoadBalancers[0].DNSName' \
+  --output text
 ```
 
-Output example: `internal-cdo-07-sandbox-alb-123456789.us-east-1.elb.amazonaws.com`
-
-### 3. Verify Mock Services Running
-
+#### **Run Individual Scenario**
 ```bash
-# Health check all services
-curl http://<ALB_DNS>/health  # Should return 200 from any mock service
-```
+cd k6-tests
 
-## 🧪 Running Tests
+# Export ALB DNS
+export ALB_DNS="http://your-alb-dns.us-east-1.elb.amazonaws.com"
 
-### Quick Test (5 minutes - smoke test)
+# Run specific scenario
+k6 run -e ALB_DNS=$ALB_DNS scenario-1-gradual-drift.js
 
-```bash
-# Test connectivity
-k6 run --duration 5m --vus 10 \
-  -e ALB_DNS=http://internal-cdo-07-sandbox-alb-xxxxx.us-east-1.elb.amazonaws.com \
+# With output to JSON
+k6 run -e ALB_DNS=$ALB_DNS \
+  --out json=results/scenario-1-local.json \
   scenario-1-gradual-drift.js
 ```
 
-### Scenario 1: Gradual Drift (2 hours)
+#### **🔴 Local Execution Limitations**
+1. **Bandwidth**: Requires stable upload ≥10 Mbps for 100+ RPS
+2. **Duration**: Computer must stay online for 2-2.5h per scenario
+3. **IP Blocking**: Residential IP may be blocked by WAF
+4. **No Automation**: Manual trigger only, no retry on failure
 
+---
+
+### **Option 3: AWS-Based Load Testing (Production-Grade)**
+
+#### **3A. EC2 Spot Instance (Cost-Effective)**
+
+**Setup:**
 ```bash
-k6 run \
-  -e ALB_DNS=http://internal-cdo-07-sandbox-alb-xxxxx.us-east-1.elb.amazonaws.com \
-  --out json=results/scenario-1-gradual-drift.json \
-  scenario-1-gradual-drift.js
+# Launch spot instance (t3.medium, ~$0.01/hour)
+aws ec2 run-instances \
+  --image-id ami-0c55b159cbfafe1f0 \
+  --instance-type t3.medium \
+  --instance-market-options '{"MarketType":"spot"}' \
+  --subnet-id subnet-xxx \
+  --security-group-ids sg-xxx \
+  --user-data file://k6-userdata.sh
 ```
 
-**What to observe:**
-- Grafana: Memory utilization trending upward
-- Slack: Alert with recommendation "Scale memory 512MB → 1024MB"
-- Lead time: AI should alert ≥15 min before breach
-
-### Scenario 2: Sudden Spike (2 hours)
-
+**User Data Script** (`k6-userdata.sh`):
 ```bash
-k6 run \
-  -e ALB_DNS=http://internal-cdo-07-sandbox-alb-xxxxx.us-east-1.elb.amazonaws.com \
-  --out json=results/scenario-2-sudden-spike.json \
-  scenario-2-sudden-spike.js
+#!/bin/bash
+# Install K6
+sudo gpg -k
+sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+  --keyserver hkp://keyserver.ubuntu.com:80 \
+  --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | \
+  sudo tee /etc/apt/sources.list.d/k6.list
+sudo apt-get update
+sudo apt-get install k6 awscli -y
+
+# Clone tests
+git clone https://github.com/CDO-07/CDO-07-Capstone-phase2.git
+cd CDO-07-Capstone-phase2/xbrain-learners/capstone/tf-4/cdo-07/k6-tests
+
+# Get ALB DNS
+ALB_DNS=$(aws elbv2 describe-load-balancers \
+  --names cdo-07-sandbox-alb \
+  --region us-east-1 \
+  --query 'LoadBalancers[0].DNSName' \
+  --output text)
+
+# Run all scenarios
+for scenario in scenario-*.js; do
+  k6 run -e ALB_DNS="http://$ALB_DNS" \
+    --out json="results/${scenario%.js}-$(date +%Y%m%d).json" \
+    "$scenario"
+done
+
+# Upload results to S3
+aws s3 cp results/ s3://cdo-07-test-results/ --recursive
+
+# Terminate self
+shutdown -h now
 ```
 
-**What to observe:**
-- Spike occurs at 30:00 mark
-- AI should detect within 2 minutes
-- Recommendation: "Enable auto-scaling, max_instances 2 → 8"
+**Cost**: ~$0.30 for 8.5h test (t3.medium spot)
 
-### Scenario 3: Slow Leak (2.5 hours)
+---
 
+#### **3B. K6 Cloud (Managed Service)**
+
+**Setup:**
 ```bash
-k6 run \
-  -e ALB_DNS=http://internal-cdo-07-sandbox-alb-xxxxx.us-east-1.elb.amazonaws.com \
-  --out json=results/scenario-3-slow-leak.json \
-  scenario-3-slow-leak.js
+# Sign up: https://k6.io/cloud
+k6 login cloud
+
+# Run with cloud execution
+k6 cloud scenario-1-gradual-drift.js
 ```
 
-**What to observe:**
-- Memory grows 1x → 4x over 2.5 hours
-- Latency degrades progressively
-- Recommendation: "Memory leak detected, restart service"
+**Pros:**
+- ✅ Distributed load from multiple regions
+- ✅ Real-time dashboards
+- ✅ No infrastructure management
+- ✅ Can simulate 1000+ RPS easily
 
-### Scenario 4: Noisy Baseline (2 hours)
+**Cons:**
+- ❌ **Cost**: ~$49-99/month for sustained tests
+- ❌ Overkill for 100 RPS baseline
 
-```bash
-k6 run \
-  -e ALB_DNS=http://internal-cdo-07-sandbox-alb-xxxxx.us-east-1.elb.amazonaws.com \
-  --out json=results/scenario-4-noisy-baseline.json \
-  scenario-4-noisy-baseline.js
+---
+
+#### **3C. AWS Distributed Load Testing Solution**
+
+AWS provides a free CloudFormation template for distributed load testing:
+- **URL**: https://aws.amazon.com/solutions/implementations/distributed-load-testing/
+- **Architecture**: Fargate containers running K6/Taurus
+- **Cost**: Pay only for Fargate runtime (~$1-2 for full test suite)
+- **Setup Time**: ~30 minutes
+
+---
+
+## 📈 Comparison Matrix
+
+| Method | Cost | Complexity | Reliability | Scalability | Recommendation |
+|--------|------|------------|-------------|-------------|----------------|
+| **GitHub Actions** | Free-$40/mo | ⭐ Low | ⭐⭐⭐ Good | ⭐⭐ Limited | ✅ **Start here** |
+| **Local Execution** | $0 | ⭐ Low | ⭐⭐ Fair | ⭐ Poor | ⚠️ Dev/debug only |
+| **EC2 Spot** | ~$0.30 | ⭐⭐ Medium | ⭐⭐⭐⭐ Excellent | ⭐⭐⭐⭐ High | ✅ **Production** |
+| **K6 Cloud** | $49+/mo | ⭐ Low | ⭐⭐⭐⭐⭐ Best | ⭐⭐⭐⭐⭐ Best | 🤷 Overkill for 100 RPS |
+| **AWS DLT Solution** | $1-2 | ⭐⭐⭐ High | ⭐⭐⭐⭐⭐ Best | ⭐⭐⭐⭐⭐ Best | ✅ **Enterprise** |
+
+---
+
+## 🎯 Recommended Approach
+
+### **For Capstone Project (Budget-Conscious)**
+1. **Development/Initial Testing**: GitHub Actions (free)
+2. **Final Evidence Collection**: EC2 Spot Instance ($0.30)
+   - Run all 4 scenarios sequentially
+   - Capture telemetry data for AI analysis
+   - Document in evidence pack
+
+### **For Production (After Capstone)**
+- AWS Distributed Load Testing Solution
+- Automated nightly runs
+- Integration with CloudWatch alarms
+
+---
+
+## 📊 Interpreting Results
+
+### **Key Metrics to Monitor**
+
+**From K6 Output:**
+```
+✓ http_req_duration..............: avg=245ms  p95=580ms  p99=1.2s
+✓ http_req_failed................: 0.23%
+✓ http_reqs......................: 720000
+✓ iterations.....................: 720000
+✓ vus............................: 100
 ```
 
-**What to observe:**
-- Multiple random spikes (normal variance)
-- AI should NOT alert on noise
-- FP rate must be ≤12%
-- Only spike #4 (105 min) might be true anomaly
+**From CloudWatch (AI Engine Telemetry):**
+- `memory_usage_percent` trend over time
+- `cpu_usage_percent` spikes
+- `api_latency_ms` P95/P99
+- `active_connections` drift
 
-## 📊 Parallel Test Execution
+**Expected AI Detections:**
+- **Scenario 1**: Memory drift alert ~90 min in (before 2h SLO breach)
+- **Scenario 2**: CPU spike alert within 5 min of spike start
+- **Scenario 3**: Connection leak alert ~120 min in
+- **Scenario 4**: Should establish clean baseline, minimal alerts
 
-Run all scenarios in parallel (requires 4 terminals or screen/tmux):
-
-```bash
-# Terminal 1
-k6 run -e ALB_DNS=http://... --out json=results/s1.json scenario-1-gradual-drift.js &
-
-# Terminal 2
-k6 run -e ALB_DNS=http://... --out json=results/s2.json scenario-2-sudden-spike.js &
-
-# Terminal 3
-k6 run -e ALB_DNS=http://... --out json=results/s3.json scenario-3-slow-leak.js &
-
-# Terminal 4
-k6 run -e ALB_DNS=http://... --out json=results/s4.json scenario-4-noisy-baseline.js &
-```
-
-**⚠️ WARNING:** Running all scenarios simultaneously will generate ~400-500 RPS peak, ensure infrastructure can handle it or run sequentially.
-
-## 🔍 Monitoring During Tests
-
-### 1. Grafana Dashboard
-```
-https://g-<workspace-id>.grafana-workspace.us-east-1.amazonaws.com
-```
-
-Watch:
-- CPU/Memory utilization per service
-- Request latency trends
-- AI prediction annotations
-
-### 2. Kinesis Metrics
-```bash
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/Kinesis \
-  --metric-name IncomingRecords \
-  --dimensions Name=StreamName,Value=cdo-07-sandbox-ingest-stream \
-  --start-time $(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%S) \
-  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
-  --period 60 \
-  --statistics Sum
-```
-
-### 3. ECS Service Health
-```bash
-aws ecs describe-services \
-  --cluster sandbox-mock-services \
-  --services payment-gw ledger-svc fraud-detection \
-  --query 'services[*].[serviceName,runningCount,desiredCount]' \
-  --output table
-```
-
-### 4. Slack Alerts
-Check `#cdo-07-alerts` channel for drift warnings with 5-part recommendations:
-1. Action verb (e.g., "Scale")
-2. Target (e.g., "Memory")
-3. From→To (e.g., "512MB → 1024MB")
-4. Confidence (e.g., "0.87")
-5. Evidence link (e.g., Grafana URL)
-
-## 📈 Results Analysis
-
-### Generate Summary Report
-
-```bash
-# After test completes
-k6 inspect results/scenario-1-gradual-drift.json
-```
-
-### Key Metrics to Capture
-
-| Metric | Threshold | Pass Criteria |
-|--------|-----------|---------------|
-| **http_req_duration (p95)** | <500ms baseline, <1000ms spike | Service responsive |
-| **http_req_failed** | <5% | Low error rate |
-| **AI Detection Lead Time** | ≥15 min | Manual verification in Grafana |
-| **FP Rate** | ≤12% | Scenario 4 critical |
-| **Catch Rate** | ≥80% | Across all scenarios |
-
-### Confusion Matrix Validation
-
-After all tests, calculate:
-
-```
-True Positives (TP): AI alerted, drift actually occurred
-False Positives (FP): AI alerted, no drift (noise)
-False Negatives (FN): No alert, but drift occurred
-True Negatives (TN): No alert, no drift
-
-Precision = TP / (TP + FP) → should be ≥88%
-Recall = TP / (TP + FN) → should be ≥80%
-FP Rate = FP / (FP + TN) → must be ≤12%
-```
+---
 
 ## 🐛 Troubleshooting
 
-### Connection Refused
+### **Problem: GitHub Actions timeout**
+**Solution**: Run scenarios individually, not `all`
 
-```bash
-# Check ALB is internal, you must be in VPC
-# Use SSM Session Manager to reach internal ALB
+### **Problem: Connection refused from K6**
+**Solution**: Verify ALB security group allows inbound from K6 IP
 
-# Or use port forwarding
-aws ssm start-session \
-  --target i-<bastion-instance-id> \
-  --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters '{"host":["<ALB_DNS>"],"portNumber":["80"],"localPortNumber":["8080"]}'
+### **Problem: High error rate (>5%)**
+**Solution**: 
+1. Check mock service health: `curl http://$ALB_DNS/health`
+2. Verify ECS tasks are running
+3. Check CloudWatch logs for errors
 
-# Then test from localhost
-k6 run -e ALB_DNS=http://localhost:8080 scenario-1-gradual-drift.js
-```
+### **Problem: No telemetry in Kinesis**
+**Solution**:
+1. Check mock service logs for Kinesis errors
+2. Verify IAM role has `kinesis:PutRecord` permission
+3. Check `KINESIS_STREAM_NAME` environment variable
 
-### High Error Rate
+---
 
-```bash
-# Check ECS tasks are running
-aws ecs list-tasks --cluster sandbox-mock-services
+## 📝 Evidence Pack Integration
 
-# Check logs
-aws logs tail /aws/ecs/sandbox-mock-services --follow
-```
+After running tests, collect:
+1. **K6 JSON results**: `k6-tests/results/*.json`
+2. **CloudWatch dashboards**: Screenshot of metrics during test
+3. **AI recommendations**: From audit log during test window
+4. **Cost analysis**: CloudWatch billing data for test period
 
-### Kinesis Throttling
-
-```bash
-# Check if stream needs more shards
-aws kinesis describe-stream-summary --stream-name cdo-07-sandbox-ingest-stream
-
-# Increase shard count if needed (impacts cost)
-aws kinesis update-shard-count \
-  --stream-name cdo-07-sandbox-ingest-stream \
-  --target-shard-count 5 \
-  --scaling-type UNIFORM_SCALING
-```
-
-## 📝 Test Checklist
-
-- [ ] Infrastructure deployed (Terraform applied)
-- [ ] Mock services running (3/3 healthy)
-- [ ] Kinesis stream active
-- [ ] AI Engine deployed and responding
-- [ ] Grafana dashboard configured
-- [ ] Slack integration working
-- [ ] ALB DNS name obtained
-- [ ] k6 installed locally
-- [ ] VPC access configured (bastion/VPN/SSM)
-- [ ] Cost circuit breaker tested ($200 cap)
-- [ ] Scenario 1 completed (2h)
-- [ ] Scenario 2 completed (2h)
-- [ ] Scenario 3 completed (2.5h)
-- [ ] Scenario 4 completed (2h)
-- [ ] Confusion matrix calculated
-- [ ] Lead time ≥15 min verified
-- [ ] FP rate ≤12% verified
-- [ ] Catch rate ≥80% verified
-- [ ] 5-part recommendations validated
-- [ ] Audit logs encrypted and retained
-
-## 🎓 Expected Outcomes
-
-| Scenario | AI Should Detect | Recommendation Example |
-|----------|------------------|------------------------|
-| 1. Gradual Drift | Memory upward trend | "Scale memory: 512MB → 1024MB, confidence 0.89" |
-| 2. Sudden Spike | Throughput anomaly | "Enable auto-scaling: max_instances 2 → 8, confidence 0.95" |
-| 3. Slow Leak | Memory leak pattern | "Restart service, investigate memory leak, confidence 0.82" |
-| 4. Noisy Baseline | Filter noise, low FP | "Widen prediction bands, increase threshold, confidence 0.76" |
-
-## 📚 References
-
-- [k6 Documentation](https://k6.io/docs/)
-- [k6 Executors](https://k6.io/docs/using-k6/scenarios/executors/)
-- [Foresight Lens Design Doc](../docs/02_infra_design.md)
-- [Telemetry Contract](../docs/06_contracts.md)
+Document in: `docs/evidence/scenario-X-evidence.md`
