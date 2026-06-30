@@ -200,11 +200,13 @@ module "window_feeder" {
     INFLUXDB_ORG                     = module.audit_s3.influxdb_org
     INFLUXDB_SECRET_ARN              = module.audit_s3.influxdb_secret_arn
     INFLUXDB_QUERY_WINDOW            = "2h"
+    METRIC_WINDOW_STEP_SECONDS       = "300"
+    FORWARD_FILL_LOOKBACK_SECONDS    = "900"
     AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
+    AI_ENGINE_SIGV4_SERVICE          = "execute-api"
+    DEPLOYMENT_VERSION               = "${local.project}-${local.environment}"
     BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
-    AUDIT_S3_BUCKET                  = module.audit_s3.audit_bucket_name
-    AUDIT_S3_PREFIX                  = "window-feeder/"
     INFERENCE_ENABLED_PARAMETER_NAME = "/${local.project}/${local.environment}/inference_enabled"
     DRIFT_ALERT_SNS_TOPIC_ARN        = module.sns_to_slack.sns_topic_arn
   }
@@ -238,12 +240,6 @@ module "window_feeder" {
           module.s3_baseline.bucket_arn,
           "${module.s3_baseline.bucket_arn}/*",
         ]
-      },
-      {
-        Sid      = "WriteAuditObjects"
-        Effect   = "Allow"
-        Action   = ["s3:PutObject"]
-        Resource = "${module.audit_s3.audit_bucket_arn}/window-feeder/*"
       },
       {
         Sid      = "PublishDriftAlerts"
