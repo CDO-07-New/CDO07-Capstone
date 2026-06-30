@@ -14,7 +14,7 @@ terraform {
 }
 
 locals {
-  workspace_name = "${var.project}-${var.environment}-grafana"
+  workspace_name = "${var.project}-${var.environment}-grafana-v2"
 }
 
 # ---------------------------------------------------------------------------
