@@ -69,6 +69,14 @@ def handler(event: dict, context: Any) -> dict:
 
     LOGGER.info("Fail-Open Fallback triggered | run_id=%s", run_id)
 
+    if _is_non_failure_sns_event(event):
+        LOGGER.info("Ignoring SNS event because reason is not window_feeder_failed")
+        return _response(200, {
+            "run_id": run_id,
+            "status": "ignored",
+            "reason": "non_failure_sns_event",
+        })
+
     audit: dict = {
         "run_id": run_id,
         "triggered_at": triggered_at,
@@ -431,6 +439,23 @@ def _extract_trigger_source(event: dict) -> str:
 # ---------------------------------------------------------------------------
 def _utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def _is_non_failure_sns_event(event: dict) -> bool:
+    records = event.get("Records", [])
+    if not records:
+        return False
+
+    sns_record = records[0].get("Sns", {})
+    message = sns_record.get("Message", "{}")
+    try:
+        payload = json.loads(message)
+    except json.JSONDecodeError:
+        payload = {}
+
+    subject = sns_record.get("Subject", "")
+    reason = payload.get("reason")
+    return reason != "window_feeder_failed" and subject != "window_feeder_failed"
 
 
 def _response(status_code: int, body: dict) -> dict:
