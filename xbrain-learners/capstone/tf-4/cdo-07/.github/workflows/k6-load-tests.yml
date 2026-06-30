@@ -1,0 +1,122 @@
+name: K6 Load Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        type: choice
+        options:
+          - sandbox
+          - staging
+      scenario:
+        description: 'Test scenario'
+        required: true
+        type: choice
+        options:
+          - all
+          - scenario-1-gradual-drift
+          - scenario-2-sudden-spike
+          - scenario-3-slow-leak
+          - scenario-4-noisy-baseline
+  schedule:
+    # Run weekly on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+jobs:
+  k6-test:
+    name: Run K6 Load Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: us-east-1
+      
+      - name: Get ALB DNS
+        id: alb
+        run: |
+          ENV="${{ github.event.inputs.environment || 'sandbox' }}"
+          ALB_NAME="cdo-07-${ENV}-alb"
+          
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names $ALB_NAME \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+          
+          echo "alb_dns=http://$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "ALB DNS: $ALB_DNS"
+      
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      
+      - name: Run K6 Test - Scenario 1
+        if: github.event.inputs.scenario == 'scenario-1-gradual-drift' || github.event.inputs.scenario == 'all'
+        working-directory: k6-tests
+        env:
+          ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
+        run: |
+          k6 run \
+            -e ALB_DNS=$ALB_DNS \
+            --out json=results/scenario-1-${{ github.run_id }}.json \
+            scenario-1-gradual-drift.js
+      
+      - name: Run K6 Test - Scenario 2
+        if: github.event.inputs.scenario == 'scenario-2-sudden-spike' || github.event.inputs.scenario == 'all'
+        working-directory: k6-tests
+        env:
+          ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
+        run: |
+          k6 run \
+            -e ALB_DNS=$ALB_DNS \
+            --out json=results/scenario-2-${{ github.run_id }}.json \
+            scenario-2-sudden-spike.js
+      
+      - name: Run K6 Test - Scenario 3
+        if: github.event.inputs.scenario == 'scenario-3-slow-leak' || github.event.inputs.scenario == 'all'
+        working-directory: k6-tests
+        env:
+          ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
+        run: |
+          k6 run \
+            -e ALB_DNS=$ALB_DNS \
+            --out json=results/scenario-3-${{ github.run_id }}.json \
+            scenario-3-slow-leak.js
+      
+      - name: Run K6 Test - Scenario 4
+        if: github.event.inputs.scenario == 'scenario-4-noisy-baseline' || github.event.inputs.scenario == 'all'
+        working-directory: k6-tests
+        env:
+          ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
+        run: |
+          k6 run \
+            -e ALB_DNS=$ALB_DNS \
+            --out json=results/scenario-4-${{ github.run_id }}.json \
+            scenario-4-noisy-baseline.js
+      
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results-${{ github.run_id }}
+          path: k6-tests/results/*.json
+      
+      - name: Generate Summary Report
+        if: always()
+        run: |
+          echo "## K6 Load Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment || 'sandbox' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Scenario:** ${{ github.event.inputs.scenario || 'all' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 Test results available in artifacts" >> $GITHUB_STEP_SUMMARY
