@@ -1,0 +1,148 @@
+name: K6 Load Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        required: true
+        type: choice
+        options:
+          - sandbox
+          - staging
+      scenario:
+        description: 'Test scenario (Note: "all" will take 8+ hours and may timeout)'
+        required: true
+        type: choice
+        options:
+          - scenario-1-gradual-drift
+          - scenario-1-gradual-drift-SHORT
+          - scenario-2-sudden-spike
+          - scenario-3-slow-leak
+          - scenario-4-noisy-baseline
+          - all
+      use_short_versions:
+        description: 'Use SHORT versions (20 min) instead of FULL (2h) - Saves 92% cost'
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    # Run SHORT versions on schedule to save cost
+    # Scenario 1: Monday 2 AM UTC
+    - cron: '0 2 * * 1'
+    # Scenario 2: Tuesday 2 AM UTC  
+    - cron: '0 2 * * 2'
+
+jobs:
+  k6-test:
+    name: Run K6 Load Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max per job
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Determine scenario from schedule
+        id: scenario
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Map cron schedule to SHORT scenario (save cost)
+            DAY=$(date +%u)  # 1=Monday, 2=Tuesday, etc.
+            case $DAY in
+              1) SCENARIO="scenario-1-gradual-drift-SHORT" ;;
+              2) SCENARIO="scenario-2-sudden-spike-SHORT" ;;
+              *) SCENARIO="scenario-1-gradual-drift-SHORT" ;;
+            esac
+          else
+            SCENARIO="${{ github.event.inputs.scenario }}"
+            # If use_short_versions is true, append -SHORT
+            if [ "${{ github.event.inputs.use_short_versions }}" = "true" ] && [[ ! "$SCENARIO" =~ "-SHORT" ]] && [ "$SCENARIO" != "all" ]; then
+              SCENARIO="${SCENARIO}-SHORT"
+            fi
+          fi
+          echo "scenario=$SCENARIO" >> $GITHUB_OUTPUT
+          echo "Running scenario: $SCENARIO"
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: us-east-1
+      
+      - name: Get ALB DNS
+        id: alb
+        run: |
+          ENV="${{ github.event.inputs.environment || 'sandbox' }}"
+          ALB_NAME="cdo-07-${ENV}-vpc-alb"
+          
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names $ALB_NAME \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+          
+          echo "alb_dns=http://$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "ALB DNS: $ALB_DNS"
+      
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      
+      - name: Run K6 Test
+        working-directory: xbrain-learners/capstone/tf-4/cdo-07/k6-tests
+        env:
+          ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
+          SCENARIO: ${{ steps.scenario.outputs.scenario }}
+        run: |
+          # Create results directory
+          mkdir -p results
+          
+          # Run the scenario
+          if [ "$SCENARIO" = "all" ]; then
+            echo "⚠️ Running ALL scenarios - This will take 8+ hours!"
+            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-1-${{ github.run_id }}.json scenario-1-gradual-drift.js
+            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-2-${{ github.run_id }}.json scenario-2-sudden-spike.js
+            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-3-${{ github.run_id }}.json scenario-3-slow-leak.js
+            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-4-${{ github.run_id }}.json scenario-4-noisy-baseline.js
+          else
+            echo "Running scenario: $SCENARIO"
+            k6 run -e ALB_DNS=$ALB_DNS --out json=results/${SCENARIO}-${{ github.run_id }}.json ${SCENARIO}.js
+          fi
+      
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results-${{ github.run_id }}
+          path: xbrain-learners/capstone/tf-4/cdo-07/k6-tests/results/*.json
+      
+      - name: Generate Summary Report
+        if: always()
+        run: |
+          echo "## K6 Load Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment || 'sandbox' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Scenario:** ${{ steps.scenario.outputs.scenario }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.scenario.outputs.scenario }}" =~ "-SHORT" ]]; then
+            echo "**Duration:** ~20 minutes (SHORT version)" >> $GITHUB_STEP_SUMMARY
+            echo "**Estimated Cost:** ~$0.50" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Duration:** ~2 hours (FULL version)" >> $GITHUB_STEP_SUMMARY
+            echo "**Estimated Cost:** ~$6" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 Test results available in artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event.inputs.use_short_versions }}" = "true" ]; then
+            echo "✅ **Using SHORT versions** to save cost and time" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "💡 **Tip:** Uncheck 'use_short_versions' for FULL 2-hour tests (production evaluation)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Using FULL versions** - Expensive (~$6 per run)" >> $GITHUB_STEP_SUMMARY
+          fi
