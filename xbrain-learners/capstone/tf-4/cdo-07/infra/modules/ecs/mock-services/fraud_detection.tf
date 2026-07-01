@@ -60,6 +60,17 @@ module "fraud_detection" {
       cidr_blocks = ["0.0.0.0/0"]
     }
   }
+
+  # Load Balancer Configuration
+  load_balancer = {
+    service = {
+      target_group_arn = aws_lb_target_group.fraud.arn
+      container_name   = "fraud-detection"
+      container_port   = 3000
+    }
+  }
+
+  depends_on = [aws_lb_target_group.fraud]
 }
 
 resource "aws_lb_target_group" "fraud" {

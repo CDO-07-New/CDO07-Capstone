@@ -101,7 +101,16 @@ export default function () {
     
     const success = check(paymentRes, {
       'payment status 200': (r) => r.status === 200,
-      'payment has transaction_id': (r) => JSON.parse(r.body).transaction_id !== undefined
+      'payment has transaction_id': (r) => {
+        if (r.status !== 200) return false;
+        try {
+          const body = JSON.parse(r.body);
+          return body.transaction_id !== undefined;
+        } catch (e) {
+          console.error(`Payment response parsing failed: ${r.status} ${r.body.substring(0, 200)}`);
+          return false;
+        }
+      }
     });
     
     errorRate.add(!success);
@@ -118,7 +127,16 @@ export default function () {
     
     const success = check(ledgerRes, {
       'ledger status 200': (r) => r.status === 200,
-      'ledger has entry_id': (r) => JSON.parse(r.body).entry_id !== undefined
+      'ledger has entry_id': (r) => {
+        if (r.status !== 200) return false;
+        try {
+          const body = JSON.parse(r.body);
+          return body.entry_id !== undefined;
+        } catch (e) {
+          console.error(`Ledger response parsing failed: ${r.status} ${r.body.substring(0, 200)}`);
+          return false;
+        }
+      }
     });
     
     errorRate.add(!success);
@@ -135,7 +153,16 @@ export default function () {
     
     const success = check(fraudRes, {
       'fraud status 200': (r) => r.status === 200,
-      'fraud has score': (r) => JSON.parse(r.body).fraud_score !== undefined
+      'fraud has score': (r) => {
+        if (r.status !== 200) return false;
+        try {
+          const body = JSON.parse(r.body);
+          return body.fraud_score !== undefined;
+        } catch (e) {
+          console.error(`Fraud response parsing failed: ${r.status} ${r.body.substring(0, 200)}`);
+          return false;
+        }
+      }
     });
     
     errorRate.add(!success);
