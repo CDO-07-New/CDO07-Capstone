@@ -17,3 +17,18 @@ output "ledger_service_id" {
   description = "The ID of the Ledger Svc ECS service"
   value       = module.ledger_svc.id
 }
+
+output "payment_security_group_id" {
+  description = "Security group ID of the Payment GW tasks"
+  value       = module.payment_gw.security_group_id
+}
+
+output "fraud_security_group_id" {
+  description = "Security group ID of the Fraud Detection tasks"
+  value       = module.fraud_detection.security_group_id
+}
+
+output "ledger_security_group_id" {
+  description = "Security group ID of the Ledger Svc tasks"
+  value       = module.ledger_svc.security_group_id
+}
