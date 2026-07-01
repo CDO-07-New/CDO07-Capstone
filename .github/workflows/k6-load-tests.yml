@@ -7,9 +7,10 @@ on:
         description: 'Environment to test'
         required: true
         type: choice
+        default: staging
         options:
-          - sandbox
           - staging
+          - sandbox
       scenario:
         description: 'Test scenario (Note: "all" will take 8+ hours and may timeout)'
         required: true
@@ -33,11 +34,17 @@ on:
     # Scenario 2: Tuesday 2 AM UTC  
     - cron: '0 2 * * 2'
 
+env:
+  AWS_REGION: us-east-1
+
 jobs:
   k6-test:
     name: Run K6 Load Test
     runs-on: ubuntu-latest
     timeout-minutes: 360  # 6 hours max per job
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
@@ -65,8 +72,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
-          aws-region: us-east-1
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
       
       - name: Get ALB DNS
         id: alb
@@ -74,13 +81,34 @@ jobs:
           ENV="${{ github.event.inputs.environment || 'sandbox' }}"
           ALB_NAME="cdo-07-${ENV}-vpc-alb"
           
+          echo "Looking for ALB: $ALB_NAME"
+          
+          # Try to get ALB DNS with better error handling
           ALB_DNS=$(aws elbv2 describe-load-balancers \
             --names $ALB_NAME \
             --query 'LoadBalancers[0].DNSName' \
-            --output text)
+            --output text 2>&1) || {
+            echo "❌ ERROR: ALB '$ALB_NAME' not found!"
+            echo ""
+            echo "Available ALBs in region ${{ env.AWS_REGION }}:"
+            aws elbv2 describe-load-balancers \
+              --query 'LoadBalancers[*].[LoadBalancerName,DNSName,State.Code]' \
+              --output table || echo "No ALBs found or permission denied"
+            echo ""
+            echo "📋 Troubleshooting:"
+            echo "1. Check if infrastructure was deployed: cd infra/environments/${ENV} && terraform apply"
+            echo "2. Verify ALB name matches terraform output: terraform output alb_dns_name"
+            echo "3. Check AWS region is correct: ${{ env.AWS_REGION }}"
+            exit 1
+          }
+          
+          if [ "$ALB_DNS" = "None" ] || [ -z "$ALB_DNS" ]; then
+            echo "❌ ERROR: ALB DNS is empty or None"
+            exit 1
+          fi
           
           echo "alb_dns=http://$ALB_DNS" >> $GITHUB_OUTPUT
-          echo "ALB DNS: $ALB_DNS"
+          echo "✅ ALB DNS: $ALB_DNS"
       
       - name: Setup k6
         run: |
