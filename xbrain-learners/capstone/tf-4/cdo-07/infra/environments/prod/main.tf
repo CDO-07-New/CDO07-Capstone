@@ -117,6 +117,7 @@ module "ai_engine" {
   audit_s3_bucket        = module.audit_s3.audit_bucket_name
   audit_s3_bucket_arn    = module.audit_s3.audit_bucket_arn
   kms_key_arn            = local.kms_key_arn
+  ecr_image_uri          = "201023212626.dkr.ecr.us-east-1.amazonaws.com/tf4-cdo07-ai-serving:sha-5a1403e90bc7-28486362173"
   tags                   = local.common_tags
 }
 
