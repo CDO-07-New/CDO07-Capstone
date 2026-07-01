@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - develop
+      - main
   repository_dispatch:
     types:
       - ai_image_published
@@ -20,7 +21,7 @@ permissions:
 
 concurrency:
   group: deploy-staging
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   AWS_REGION: us-east-1
