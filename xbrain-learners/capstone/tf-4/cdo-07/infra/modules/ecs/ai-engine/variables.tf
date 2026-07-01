@@ -80,3 +80,9 @@ variable "tags" {
     Team        = "CDO-07"
   }
 }
+
+variable "alert_sns_topic_arn" {
+  description = "ARN of the SNS topic (sns_to_slack) to notify when an AI Engine CloudWatch Alarm fires. Leave empty to suppress alarm actions."
+  type        = string
+  default     = ""
+}

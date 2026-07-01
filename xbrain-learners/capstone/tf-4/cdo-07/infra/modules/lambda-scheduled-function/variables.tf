@@ -88,6 +88,12 @@ variable "log_retention_days" {
   default     = 30
 }
 
+variable "alert_sns_topic_arn" {
+  description = "ARN of the SNS topic (sns_to_slack) to notify when a CloudWatch Alarm fires. Leave empty to suppress alarm actions."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "A map of tags to assign to all resources."
   type        = map(string)
