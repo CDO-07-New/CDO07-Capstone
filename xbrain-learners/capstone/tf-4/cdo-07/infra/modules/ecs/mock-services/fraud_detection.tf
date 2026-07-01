@@ -5,7 +5,10 @@ module "fraud_detection" {
   name        = "fraud-detection"
   cluster_arn = module.ecs_cluster.cluster_arn
 
-  depends_on = [null_resource.push_mock_image["fraud-detection"]]
+  depends_on = [
+    null_resource.push_mock_image["fraud-detection"],
+    aws_lb_target_group.fraud
+  ]
 
   cpu    = 256 # 0.25 vCPU
   memory = 512 # 0.5 GB
@@ -72,7 +75,7 @@ module "fraud_detection" {
     }
   }
 
-  depends_on = [aws_lb_target_group.fraud]
+
 }
 
 resource "aws_lb_target_group" "fraud" {

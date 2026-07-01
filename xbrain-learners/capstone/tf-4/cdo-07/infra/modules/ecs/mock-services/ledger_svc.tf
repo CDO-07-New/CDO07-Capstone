@@ -5,7 +5,10 @@ module "ledger_svc" {
   name        = "ledger-svc"
   cluster_arn = module.ecs_cluster.cluster_arn
 
-  depends_on = [null_resource.push_mock_image["ledger-svc"]]
+  depends_on = [
+    null_resource.push_mock_image["ledger-svc"],
+    aws_lb_target_group.ledger
+  ]
 
   cpu    = 256 # 0.25 vCPU
   memory = 512 # 0.5 GB
@@ -72,7 +75,7 @@ module "ledger_svc" {
     }
   }
 
-  depends_on = [aws_lb_target_group.ledger]
+
 }
 
 resource "aws_lb_target_group" "ledger" {

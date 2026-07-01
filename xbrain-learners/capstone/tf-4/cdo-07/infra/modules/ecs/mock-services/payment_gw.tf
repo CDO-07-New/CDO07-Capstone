@@ -5,7 +5,10 @@ module "payment_gw" {
   name        = "payment-gw"
   cluster_arn = module.ecs_cluster.cluster_arn
 
-  depends_on = [null_resource.push_mock_image["payment-gw"]]
+  depends_on = [
+    null_resource.push_mock_image["payment-gw"],
+    aws_lb_target_group.payment
+  ]
 
   cpu    = 256 # 0.25 vCPU
   memory = 512 # 0.5 GB
@@ -74,7 +77,7 @@ module "payment_gw" {
     }
   }
 
-  depends_on = [aws_lb_target_group.payment]
+
 }
 
 resource "aws_lb_target_group" "payment" {
