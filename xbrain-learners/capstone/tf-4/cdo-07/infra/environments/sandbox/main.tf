@@ -1,6 +1,18 @@
 ###############################################################################
 # CDO-07 · Task Force 4 · Sandbox Environment
 ###############################################################################
+# --- Layer 0: KMS Key ---
+resource "aws_kms_key" "sandbox" {
+  description             = "KMS key for sandbox environment"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+  tags                    = local.common_tags
+}
+
+resource "aws_kms_alias" "sandbox" {
+  name          = "alias/${local.project}-${local.environment}-key"
+  target_key_id = aws_kms_key.sandbox.key_id
+}
 
 # --- Layer 1: Cost Governance ---
 module "cost_circuit_breaker" {

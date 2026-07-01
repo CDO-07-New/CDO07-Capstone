@@ -41,13 +41,13 @@ resource "aws_security_group" "vpce" {
   })
 }
 
-resource "aws_vpc_security_group_ingress_rule" "vpce_from_alb" {
-  security_group_id            = aws_security_group.vpce.id
-  description                  = "HTTPS from ALB / ECS tasks"
-  from_port                    = 443
-  to_port                      = 443
-  ip_protocol                  = "tcp"
-  referenced_security_group_id = module.alb.security_group_id
+resource "aws_vpc_security_group_ingress_rule" "vpce_from_vpc" {
+  security_group_id = aws_security_group.vpce.id
+  description       = "HTTPS from all resources in VPC (including ECS tasks)"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  cidr_ipv4         = module.vpc.vpc_cidr_block
 }
 
 resource "aws_vpc_security_group_ingress_rule" "vpce_from_lambda" {

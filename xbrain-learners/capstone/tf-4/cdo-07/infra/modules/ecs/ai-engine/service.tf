@@ -118,7 +118,10 @@ module "ai_engine_service" {
 
   ignore_task_definition_changes = true
 
-  depends_on = [aws_lb_listener_rule.ai_engine]
+  depends_on = [
+    aws_lb_listener_rule.ai_engine,
+    null_resource.push_ai_image
+  ]
 }
 
 # =============================================================================

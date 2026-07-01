@@ -18,11 +18,11 @@ terraform {
     }
   }
 
-  backend "s3" {
-    bucket       = "tf4-cdo07-tf-state-201023212626-use1"
-    key          = "tf4-cdo07/sandbox/terraform.tfstate"
-    region       = "us-east-1"
-    encrypt      = true
-    use_lockfile = true
-  }
+  # backend "s3" {
+  #   bucket       = "tf4-cdo07-tf-state-201023212626-use1"
+  #   key          = "tf4-cdo07/sandbox/terraform.tfstate"
+  #   region       = "us-east-1"
+  #   encrypt      = true
+  #   use_lockfile = true
+  # }
 }

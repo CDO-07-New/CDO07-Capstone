@@ -5,6 +5,8 @@ module "ledger_svc" {
   name        = "ledger-svc"
   cluster_arn = module.ecs_cluster.cluster_arn
 
+  depends_on = [null_resource.push_mock_image["ledger-svc"]]
+
   cpu    = 256 # 0.25 vCPU
   memory = 512 # 0.5 GB
 

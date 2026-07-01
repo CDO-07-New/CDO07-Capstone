@@ -48,19 +48,19 @@ variable "kms_key_arn" {
 variable "ecr_image_uri_payment" {
   description = "Container image URI for payment-gw. Default is placeholder nginx."
   type        = string
-  default     = "public.ecr.aws/nginx/nginx:alpine"
+  default     = "public.ecr.aws/nginx/nginx:1.26-alpine"
 }
 
 variable "ecr_image_uri_ledger" {
   description = "Container image URI for ledger-svc. Default is placeholder nginx."
   type        = string
-  default     = "public.ecr.aws/nginx/nginx:alpine"
+  default     = "public.ecr.aws/nginx/nginx:1.26-alpine"
 }
 
 variable "ecr_image_uri_fraud" {
   description = "Container image URI for fraud-detection. Default is placeholder nginx."
   type        = string
-  default     = "public.ecr.aws/nginx/nginx:alpine"
+  default     = "public.ecr.aws/nginx/nginx:1.26-alpine"
 }
 
 variable "tags" {

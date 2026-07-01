@@ -32,7 +32,7 @@ variable "alb_arn_suffix" {
 variable "ecr_image_uri" {
   description = "Container image URI. Placeholder until AI team delivers via ECR repo 'ai-serving'. Change this variable only."
   type        = string
-  default     = "public.ecr.aws/nginx/nginx:alpine"
+  default     = "public.ecr.aws/nginx/nginx:1.26-alpine"
 }
 
 variable "aws_region" {
