@@ -5,8 +5,8 @@ module "fraud_detection" {
   name        = "fraud-detection"
   cluster_arn = module.ecs_cluster.cluster_arn
 
-  cpu                = 256 # 0.25 vCPU
-  memory             = 512 # 0.5 GB
+  cpu                = 512 # 0.5 vCPU
+  memory             = 1024 # 1.0 GB
   desired_count      = 1
   enable_autoscaling = false
 
