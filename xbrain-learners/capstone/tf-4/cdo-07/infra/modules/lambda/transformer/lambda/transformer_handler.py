@@ -39,12 +39,16 @@ logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 # ---------------------------------------------------------------------------
 # PII fields — stripped before any downstream storage (03_security_design §1.4)
 # ---------------------------------------------------------------------------
-PII_FIELDS = frozenset(["customer_id", "email", "ip_address", "user_agent"])
+PII_FIELDS = frozenset([
+    "email", "phone", "name",
+    "transaction_id", "account_id", "card_pan", "user_id",
+    "customer_id", "ip_address", "user_agent"
+])
 
 # ---------------------------------------------------------------------------
 # Telemetry Contract v1.0 — required fields
 # ---------------------------------------------------------------------------
-REQUIRED_FIELDS = {"service_id", "metric_type", "value", "ts"}
+REQUIRED_FIELDS = {"service_id", "tenant_id", "metric_type", "value", "ts"}
 
 # ---------------------------------------------------------------------------
 # InfluxDB connection config — injected by Terraform via env vars
@@ -112,6 +116,9 @@ def handler(event: dict, context: Any) -> dict:
             # PII Firewall (03_security_design §1.4)
             for field in PII_FIELDS:
                 data.pop(field, None)
+            if isinstance(data.get("labels"), dict):
+                for field in PII_FIELDS:
+                    data["labels"].pop(field, None)
 
             # Accept legacy field names for backward compat
             if "timestamp" in data and "ts" not in data:
