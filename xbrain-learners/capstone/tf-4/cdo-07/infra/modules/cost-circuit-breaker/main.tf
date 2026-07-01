@@ -336,10 +336,10 @@ resource "aws_budgets_budget" "monthly_cost" {
   time_unit    = "MONTHLY"
 
   notification {
-    comparison_operator       = "GREATER_THAN"
-    threshold                 = var.warning_threshold_percent
-    threshold_type            = "PERCENTAGE"
-    notification_type         = "ACTUAL"
+    comparison_operator = "GREATER_THAN"
+    threshold           = var.warning_threshold_percent
+    threshold_type      = "PERCENTAGE"
+    notification_type   = "ACTUAL"
     subscriber_sns_topic_arns = compact([
       aws_sns_topic.budget_warning.arn,
       var.alert_sns_topic_arn, # Forward 80% warning → Slack
@@ -347,10 +347,10 @@ resource "aws_budgets_budget" "monthly_cost" {
   }
 
   notification {
-    comparison_operator       = "GREATER_THAN"
-    threshold                 = var.hard_threshold_percent
-    threshold_type            = "PERCENTAGE"
-    notification_type         = "ACTUAL"
+    comparison_operator = "GREATER_THAN"
+    threshold           = var.hard_threshold_percent
+    threshold_type      = "PERCENTAGE"
+    notification_type   = "ACTUAL"
     subscriber_sns_topic_arns = compact([
       aws_sns_topic.budget_hard_trigger.arn,
       var.alert_sns_topic_arn, # Forward 100% hard-limit → Slack

@@ -12,6 +12,20 @@ container_port="${CONTAINER_PORT:-8080}"
 codedeploy_app="${CODEDEPLOY_APP:-tf4-cdo07-${environment}-${service_key}}"
 codedeploy_group="${CODEDEPLOY_GROUP:-tf4-cdo07-${environment}-${service_key}}"
 
+if [[ "$image_uri" != *@sha256:* ]]; then
+  echo "::error title=Invalid image URI::Use an immutable digest image URI like repo@sha256:digest."
+  exit 1
+fi
+
+aws deploy get-application \
+  --application-name "$codedeploy_app" \
+  >/dev/null
+
+aws deploy get-deployment-group \
+  --application-name "$codedeploy_app" \
+  --deployment-group-name "$codedeploy_group" \
+  >/dev/null
+
 current_task_definition="$(
   aws ecs describe-services \
     --cluster "$cluster" \
@@ -105,6 +119,13 @@ deployment_id="$(
 )"
 
 aws deploy wait deployment-successful \
-  --deployment-id "$deployment_id"
+  --deployment-id "$deployment_id" || {
+    echo "::error title=CodeDeploy deployment failed::${deployment_id}"
+    aws deploy get-deployment \
+      --deployment-id "$deployment_id" \
+      --query 'deploymentInfo.{status:status,errorInformation:errorInformation,createTime:createTime,completeTime:completeTime,deploymentOverview:deploymentOverview}' \
+      --output json
+    exit 1
+  }
 
 echo "Blue/green deployed ${ecs_service} to ${image_uri} with CodeDeploy deployment ${deployment_id}"
