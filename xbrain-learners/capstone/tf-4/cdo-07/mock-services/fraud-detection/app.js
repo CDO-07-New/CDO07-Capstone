@@ -12,7 +12,6 @@
 
 const express = require('express');
 const AWS = require('aws-sdk');
-const os = require('os');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -173,11 +172,6 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
   }
 
   const timestamp = new Date().toISOString();
-  const cpuUsage = os.loadavg()[0] * 10;
-  const memUsage = (1 - os.freemem() / os.totalmem()) * 100;
-  
-  // Fraud detection has higher CPU usage during inference (add 20-30% baseline)
-  const fraudCPUAdjustment = 20 + Math.random() * 10;
   
   const metrics = [
     {
@@ -260,7 +254,7 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
 
 // Periodic heartbeat metrics (every 30 seconds)
 setInterval(async () => {
-  await emitMetrics('heartbeat', 0);
+  await emitMetrics('heartbeat', 0, null, null, SERVICE_NAME);
 }, 30000);
 
 app.listen(PORT, () => {

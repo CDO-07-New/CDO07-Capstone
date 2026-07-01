@@ -103,9 +103,12 @@ function testPaymentService(tenant) {
   ];
 
   const ep  = pickWeighted(endpoints);
+  let namePay = ENDPOINTS.PAYMENT.AUTHORIZE;
+  if (ep.url.includes('/status/'))  namePay = `${ENDPOINTS.PAYMENT.STATUS}/:id`;
+  else if (ep.url.includes('/capture')) namePay = ENDPOINTS.PAYMENT.CAPTURE;
   const res = ep.method === 'GET'
-    ? http.get(ep.url,  { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'payment' } })
-    : http.post(ep.url, ep.payload, { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'payment' } });
+    ? http.get(ep.url,  { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'payment', name: namePay } })
+    : http.post(ep.url, ep.payload, { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'payment', name: namePay } });
 
   const ok = check(res, {
     'payment 200/201': (r) => r.status === 200 || r.status === 201,
@@ -124,9 +127,12 @@ function testLedgerService(tenant) {
   ];
 
   const ep  = pickWeighted(endpoints);
+  let nameLed = ENDPOINTS.LEDGER.ENTRY;
+  if (ep.url.includes('/balance/'))  nameLed = `${ENDPOINTS.LEDGER.BALANCE}/:id`;
+  else if (ep.url.includes('/history/')) nameLed = `${ENDPOINTS.LEDGER.HISTORY}/:id`;
   const res = ep.method === 'GET'
-    ? http.get(ep.url,  { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'ledger' } })
-    : http.post(ep.url, ep.payload, { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'ledger' } });
+    ? http.get(ep.url,  { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'ledger', name: nameLed } })
+    : http.post(ep.url, ep.payload, { headers: generateHeaders(tenant), timeout: '10s', tags: { tenant, endpoint: 'ledger', name: nameLed } });
 
   const ok = check(res, {
     'ledger 200/201':  (r) => r.status === 200 || r.status === 201,
