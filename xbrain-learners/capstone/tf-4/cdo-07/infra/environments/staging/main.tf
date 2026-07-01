@@ -161,7 +161,7 @@ module "ai_engine" {
 
   # ECR Image URI - provided by AI team (placeholder for now)
   # TODO: Update once AI team provides actual image
-  ecr_image_uri = "public.ecr.aws/nginx/nginx:alpine"
+  ecr_image_uri = "201023212626.dkr.ecr.us-east-1.amazonaws.com/tf4-cdo07-ai-serving:sha-5a1403e90bc7-28486362173"
 
   tags = local.common_tags
 }
