@@ -196,6 +196,7 @@ jobs:
         if: steps.preflight.outputs.deploy_ready == 'true'
         shell: bash
         env:
+          ECS_CLUSTER: ${{ env.ENVIRONMENT }}-tf-4-aiops-cluster
           ECS_SERVICE_NAME: foresight-lens-engine
           CONTAINER_NAME: foresight-lens
           CONTAINER_PORT: '8080'
