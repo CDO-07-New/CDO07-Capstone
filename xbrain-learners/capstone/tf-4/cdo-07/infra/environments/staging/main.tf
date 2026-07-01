@@ -220,8 +220,8 @@ module "window_feeder" {
   package_path         = "${path.module}/../../lambda/window-feeder/build/window-feeder.zip"
   handler              = "app.handler"
   runtime              = "python3.12"
-  timeout_seconds      = 30
-  memory_mb            = 256
+  timeout_seconds      = 90
+  memory_mb            = 2048
   reserved_concurrency = -1 # staging: use unreserved concurrency pool
 
   subnet_ids         = module.networking.private_subnets
@@ -245,7 +245,7 @@ module "window_feeder" {
     METRIC_WINDOW_STEP_SECONDS       = "300"
     FORWARD_FILL_LOOKBACK_SECONDS    = "900"
     AI_ENGINE_PREDICT_URL            = "${module.ai_predict_api.invoke_url}/v1/predict"
-    AI_ENGINE_TIMEOUT_SECONDS        = "5"
+    AI_ENGINE_TIMEOUT_SECONDS        = "60"
     AI_ENGINE_SIGV4_SERVICE          = "execute-api"
     DEPLOYMENT_VERSION               = "${local.project}-${local.environment}"
     BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
