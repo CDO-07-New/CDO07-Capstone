@@ -61,11 +61,12 @@ graph TD
 
 | Tên SG (SG name) | Inbound | Outbound | Gắn với (Attached to) |
 |---|---|---|---|
-| `tf4-cdo07-alb-sg` | Port 443 (HTTPS) từ `k6` (qua SSM Port Forwarding) & `Lambda Window Feeder` (từ `tf4-cdo07-lambda-sg`) | 8080 (HTTP) → `tf4-cdo07-app-sg` (payment-gateway, ledger-service, fraud-detection & AI Engine) | Application Load Balancer (Internal) |
-| `tf4-cdo07-app-sg` | Chỉ nhận cổng 8080 (HTTP) từ `tf4-cdo07-alb-sg` | 443 & 8086 → VPC Endpoints (KDS, CW, ECR, SSM, SNS, Timestream for InfluxDB) | Mock Services, AI Engine (ECS Fargate) |
-| `tf4-cdo07-lambda-sg` | (Không inbound - EventBridge trigger cho Feeder, Firehose trigger cho Transformer) | 443 & 8086 → VPC Endpoints (Timestream for InfluxDB, S3, SSM, SNS, CW) | Lambda Transformer, Lambda Window Feeder, Lambda CB |
-| `tf4-cdo07-vpce-sg` | 443 & 8086 từ `tf4-cdo07-app-sg`, `tf4-cdo07-lambda-sg` và `tf4-cdo07-firehose-sg` | (Không outbound) | Tất cả Interface VPC Endpoints |
-| `tf4-cdo07-firehose-sg` | (Không inbound - AWS service interface) | 8086 / 443 → VPC Endpoint (Timestream for InfluxDB) và 443 -> S3 Gateway | Kinesis Data Firehose (VPC delivery) |
+| `tf4-cdo07-alb-sg` | Port 80 (HTTP) từ `tf4-cdo07-lambda-sg` (Window Feeder → AI Engine) | 8080 (HTTP) → `tf4-cdo07-app-sg` (Mock Services & AI Engine), 8086 → `tf4-cdo07-influxdb-sg` | Application Load Balancer (Internal) — được quản lý bởi `terraform-aws-modules/alb` |
+| `tf4-cdo07-lambda-sg` | (Không inbound — EventBridge trigger qua event source mapping nội bộ AWS) | 443 → `tf4-cdo07-vpce-sg` (VPC Endpoints), 8086 → `tf4-cdo07-influxdb-sg`, 80 → `tf4-cdo07-alb-sg` (Window Feeder → AI Engine) | Lambda Transformer, Lambda Window Feeder, Lambda CB, Lambda Fail-Open Fallback |
+| `tf4-cdo07-vpce-sg` | 443 từ `tf4-cdo07-alb-sg` (ALB/ECS tasks) & `tf4-cdo07-lambda-sg` | (Không outbound — AWS-managed interface) | Tất cả Interface VPC Endpoints (ECR, Logs, SSM, KMS, KDS, Secrets Manager, SNS, Grafana) |
+| `tf4-cdo07-influxdb-sg` | 8086 từ `tf4-cdo07-lambda-sg` & `tf4-cdo07-alb-sg` | (Không outbound cần thiết) | Timestream for InfluxDB instance |
+
+> **Ghi chú triển khai**: Kiến trúc thực tế hợp nhất ECS Task SG vào ALB SG module (`terraform-aws-modules/alb`) thay vì tạo SG riêng `tf4-cdo07-app-sg`, giúp giảm số lượng SG cần quản lý. Kinesis Firehose là AWS-managed service, invoke Lambda qua event trigger nội bộ AWS nên không cần SG riêng.
 
 > **Nguyên tắc**: Mọi SG đều dùng **source SG reference** thay vì CIDR trực tiếp để đảm bảo implicit deny khi các task hoặc function bị gỡ bỏ.
 
@@ -73,18 +74,20 @@ graph TD
 
 | Dịch vụ | Loại Endpoint | Mục đích |
 |---|---|---|
-| **Timestream for InfluxDB (TS)** | Interface | Kinesis Firehose ghi telemetry; Lambda Window Feeder & Managed Grafana truy vấn metrics |
-| **SNS** | Interface | Lambda Window Feeder / AI Engine gửi thông báo drift alert (5-part recommendation) tới Slack Webhook |
-| **Managed Grafana (AMG)** | Interface | Cho phép Grafana truy cập và truy vấn metrics an toàn từ Timestream for InfluxDB |
-| **CloudWatch (CW)** | Interface | Đẩy log ứng dụng và metrics từ ECS Tasks & Lambdas |
-| **ECR (API + Docker)** | Interface | Pull container image cho ECS Tasks (Mock Services & AI Engine) |
-| **S3** | Gateway | Ghi AI audit logs, đọc baseline models, và lưu Terraform state |
-| **SSM** | Interface | Lambda Window Feeder và Lambda CB truy xuất/cập nhật cấu hình trong Parameter Store |
+| **ECR API** | Interface | Pull container image manifest cho ECS Tasks (Mock Services & AI Engine) |
+| **ECR Docker** | Interface | Pull container image layers cho ECS Tasks |
+| **CloudWatch Logs (logs)** | Interface | Đẩy log ứng dụng từ ECS Tasks & Lambda functions |
+| **SSM** | Interface | Lambda Window Feeder và Lambda CB truy xuất/cập nhật cấu hình `inference_enabled` trong Parameter Store |
+| **KMS** | Interface | Mã hóa/giải mã dữ liệu Kinesis, S3, SSM SecureString bằng CMK qua private network |
 | **Kinesis Data Streams (KDS)** | Interface | Mock Services (ECS) ghi telemetry vào KDS qua private endpoint, không đi qua Internet |
+| **Secrets Manager** | Interface | Lambda Transformer & Window Feeder đọc InfluxDB operator token được mã hóa |
+| **SNS** | Interface | Lambda Window Feeder / Fail-Open Fallback / CloudWatch Alarms gửi drift alert tới Slack Webhook |
+| **Managed Grafana (grafana)** | Interface | Truy cập Grafana API nội bộ |
+| **Managed Grafana Workspace (grafana-workspace)** | Interface | Kết nối Grafana Workspace với datasource Timestream |
+| **S3** | Gateway | Ghi AI audit logs, đọc baseline models, và lưu Terraform state (không tốn phí) |
 
-> **Lưu ý**: Nhờ sử dụng VPC Endpoints cho toàn bộ lưu lượng dữ liệu nội bộ (bao gồm cả Amazon Timestream for InfluxDB, Kinesis, SNS, AMG), hệ thống không cần triển khai NAT Gateway. Điều này giúp tối ưu hóa chi phí vận hành ở mức tối thiểu (~$0/tháng cho NAT), hoàn toàn đáp ứng ngân sách capstone cực kỳ hạn chế ($200/tháng). Tổng cộng hệ thống trang bị đúng **8 VPC Endpoints** (7 Interface + 1 S3 Gateway), khớp hoàn toàn với [`02_infra_design.md`](02_infra_design.md).
+> **Lưu ý**: Nhờ sử dụng VPC Endpoints cho toàn bộ lưu lượng dữ liệu nội bộ, hệ thống không cần triển khai NAT Gateway. Điều này giúp tối ưu hóa chi phí vận hành (~$0/tháng cho NAT), đáp ứng ngân sách capstone $200/tháng. Tổng cộng hệ thống trang bị **11 VPC Endpoints** (10 Interface + 1 S3 Gateway).
 >
-> * **KMS**: Để tối ưu hóa chi phí và số lượng VPC endpoints (giới hạn 8), hệ thống không thiết lập VPC Endpoint cho KMS. Các cuộc gọi mã hóa/giải mã S3 và SSM được định tuyến trực tiếp qua AWS endpoints được bảo vệ.
 > * **Kinesis Firehose**: AWS managed service, invoke Lambda qua event trigger nội bộ AWS — không cần VPC Endpoint và không đi qua NAT.
 
 ### 1.4 Ingestion & PII Firewall (Lọc dữ liệu biên)
@@ -249,21 +252,30 @@ sequenceDiagram
 
 ### 3.1 Danh mục cấu hình & tham số (Configuration & Parameter Inventory)
 
-Kiến trúc mới không sử dụng Secrets Manager cho các thông tin bảo mật động (dynamic secrets). Toàn bộ cấu hình hệ thống (nạp vào qua Terraform hoặc thay đổi động tại runtime) được quản lý tập trung và bảo mật bên trong **SSM Parameter Store**:
+Hệ thống sử dụng kết hợp **SSM Parameter Store** (cho cờ trạng thái runtime & webhook URL) và **AWS Secrets Manager** (cho InfluxDB operator token cần rotation) để tối ưu bảo mật theo từng loại secret:
+
+**SSM Parameter Store (trạng thái & cấu hình runtime):**
 
 | Đường dẫn tham số (Parameter Path) | Dữ liệu lưu trữ | Cơ chế bảo vệ | Được truy cập bởi (Accessed by) |
 |---|---|---|---|
-| `/tf4/cdo07/InferenceEnabled` | Trạng thái cho phép/ngăn chặn gọi AI Predict (`true`/`false`) | SecureString (KMS CMK) | `Lambda Window Feeder` (Đọc - Read), `Lambda CB` (Ghi - Write) |
-| `/tf4/cdo07/tenants/{tenant_id}` | Siêu dữ liệu (metadata) và schema cấu hình của từng tenant | String | `Lambda Transformer` (Đọc - Read), `Lambda Window Feeder` (Đọc - Read) |
-| `/tf4/cdo07/influxdb-token` | Mã thông báo truy cập (API Access Token) của Timestream for InfluxDB | SecureString (KMS CMK) | `Lambda Window Feeder` (Đọc - Read), `Kinesis Firehose` (Đọc - Read), `Managed Grafana` (Đọc - Read) |
+| `/{project}/{environment}/inference_enabled` | Trạng thái cho phép/ngăn chặn gọi AI Predict (`true`/`false`) | SecureString (KMS CMK) | `Lambda Window Feeder` (Đọc - Read), `Lambda CB` (Ghi - Write) |
+| `/{project}/{environment}/slack-webhook-url` | Slack Incoming Webhook URL cho kênh SRE alerts | SecureString (KMS AWS-managed) | `Lambda sns-to-slack` (Đọc tại runtime - Read) |
+| `/{project}/{environment}/tenants/{tenant_id}` | Siêu dữ liệu (metadata) và schema cấu hình của từng tenant | String | `Lambda Transformer` (Đọc - Read), `Lambda Window Feeder` (Đọc - Read) |
 
-**Không áp dụng trong dự án này (Secrets Manager):**
+> **Ghi chú path**: `{project}` = `tf4-cdo07`, `{environment}` = `sandbox` / `staging` / `prod`. Ví dụ thực tế: `/tf4-cdo07/sandbox/inference_enabled`.
+
+**AWS Secrets Manager (credentials cần rotation):**
+
+| Secret | Dữ liệu lưu trữ | Cơ chế bảo vệ | Được truy cập bởi (Accessed by) |
+|---|---|---|---|
+| `influxdb-operator-token` | InfluxDB operator token để ghi/đọc time-series metrics | SecretString (KMS CMK), tự động rotation | `Lambda Transformer` (Đọc), `Lambda Window Feeder` (Đọc) |
+
+**Không áp dụng trong dự án này:**
 
 | Thông tin bảo mật (Secret - yêu cầu mẫu) | Lý do không sử dụng |
 |---|---|
-| Bedrock / LLM API key | "Dự đoán dựa trên LLM (LLM-based prediction) – Không sử dụng do chi phí cao". Sử dụng phương pháp dự báo dựa trên thống kê/ML (statistical/ML-based forecasting). |
-| DB credentials (RDS) | Hệ thống sử dụng Amazon Timestream for InfluxDB. Xác thực được quản lý thông qua InfluxDB API token được mã hóa và lưu trữ an toàn trong SSM Parameter Store dưới dạng `SecureString`. Không sử dụng RDS hay các thông tin đăng nhập tĩnh truyền thống. |
-| Slack webhook URL | Thông báo đẩy từ SNS trực tiếp sang Slack qua Chatbot/Integration, không lộ (expose) khóa webhook tại runtime. |
+| Bedrock / LLM API key | Dự đoán dựa trên statistical/ML forecasting, không dùng LLM (chi phí cao). |
+| DB credentials (RDS) | Hệ thống dùng Amazon Timestream for InfluxDB với token-based auth, không dùng RDS. |
 
 ### 3.2 Mô hình nạp tham số (Parameter Inject Pattern)
 
@@ -283,7 +295,7 @@ Kiến trúc mới không sử dụng Secrets Manager cho các thông tin bảo 
 ### 4.1 Mã hóa dữ liệu tĩnh (Encryption At Rest)
 Toàn bộ dữ liệu lưu trữ tĩnh (Data at Rest) trong hệ thống phải được mã hóa nhằm ngăn chặn rủi ro truy cập vật lý trái phép hoặc rò rỉ dữ liệu giữa các phân vùng dùng chung tài khoản:
 *   **Vùng đệm nhận dữ liệu (Metric Ingestion Buffer - Kinesis Data Streams)**: Dữ liệu metric lưu tạm thời trong Kinesis Data Streams được mã hóa tĩnh mặc định sử dụng Customer Managed Key (CMK) liên kết với KMS.
-*   **Nhật ký kiểm toán (Audit Log - AI decisions)**: Được lưu trữ tại Amazon S3 bucket `tf4-cdo07-audit-log` và bắt buộc mã hóa bằng Customer Managed Key (CMK) mã định danh `tf4-cdo07-audit-cmk`. Dữ liệu được tự động chuyển đổi thẳng sang Glacier Deep Archive sau 90 ngày (không qua lớp trung gian S3 IA, nhằm tối ưu hóa compliance lifecycle khớp hoàn toàn với sơ đồ CDO7 và thiết kế hạ tầng gốc) phục vụ tuân thủ lưu giữ 1 năm.
+*   **Nhật ký kiểm toán (Audit Log - AI decisions)**: Được lưu trữ tại Amazon S3 bucket `tf4-cdo07-audit-log` và bắt buộc mã hóa bằng Customer Managed Key (CMK) mã định danh `tf4-cdo07-audit-cmk`. Dữ liệu được lưu trữ tại S3 Standard trong 90 ngày đầu (hot tier cho SRE debug và truy vấn Athena tức thì), sau đó tự động chuyển thẳng sang Glacier Deep Archive (90–365 ngày) để tối ưu chi phí compliance. Lifecycle 2 giai đoạn này đơn giản hơn và phù hợp với ADR-004, dữ liệu tự động xóa sau 365 ngày.
 *   **Dữ liệu Time-series & Telemetry (Time-series Metrics & Telemetry Data)**: Lưu trữ tại Amazon Timestream for InfluxDB và được mã hóa tĩnh mặc định ở lớp lưu trữ (EBS Volume gắn với DB instance) bằng KMS CMK hoặc AWS-managed key nhằm tối ưu chi phí và hiệu năng truy vấn cho dữ liệu tài chính.
 *   **Trạng thái hạ tầng (Terraform State)**: File state ứng dụng lưu tại S3 bucket `tf4-cdo07-tf-state` được mã hóa mặc định, kích hoạt bucket versioning và chính sách block public access toàn diện.
 *   **Cấu hình hệ thống (Configuration Parameters)**: Các tham số nhạy cảm trong SSM Parameter Store (như trạng thái `/tf4/cdo07/InferenceEnabled`) được lưu ở dạng `SecureString` và được mã hóa bằng CMK.
@@ -324,12 +336,15 @@ Hệ thống thực hiện ghi nhật ký kiểm toán (Audit Log) một cách c
 
 ### 5.2 Lưu trữ & Thời gian Duy trì (Storage & Retention)
 Các loại nhật ký hệ thống được phân loại lưu trữ và áp dụng chính sách duy trì nghiêm ngặt để cân bằng giữa tính tuân thủ và chi phí vận hành:
-*   **AI Decision Audit Log**: Lưu trữ trực tiếp tại S3 Audit Bucket. Dữ liệu được lưu trữ nóng tại S3 Standard, sau đó tự động chuyển đổi thẳng sang S3 Glacier Deep Archive sau 90 ngày (khớp với chính sách lifecycle 90 ngày trong sơ đồ CDO7 và thiết kế hạ tầng gốc). Để đáp ứng yêu cầu lưu trữ 1 năm phục vụ đối soát tuân thủ (ADR-005), dữ liệu sẽ được lưu giữ tại lớp lưu trữ lạnh Glacier Deep Archive trước khi tự động xóa sau 365 ngày.
+*   **AI Decision Audit Log**: Lưu trữ trực tiếp tại S3 Audit Bucket theo lifecycle **2 giai đoạn (ADR-004)**:
+        *   **Giai đoạn 1 (0–90 ngày)**: S3 Standard — hot tier, SRE truy vấn tức thì qua Amazon Athena.
+        *   **Giai đoạn 2 (90–365 ngày)**: S3 Glacier Deep Archive — cold compliance tier, tối ưu chi phí.
+        *   **Sau 365 ngày**: Tự động xóa (Expire) — tuân thủ giới hạn lưu trữ 1 năm.
     *   **Lưu ý về truy xuất từ Glacier (SLA & Operational Implication)**: Dữ liệu audit log sau 90 ngày sẽ được chuyển sang lớp lưu trữ lạnh S3 Glacier Deep Archive để tối ưu hóa chi phí.
         *   *SLA khôi phục (SLA khôi phục)*: Thời gian khôi phục dữ liệu (retrieval SLA) từ Glacier Deep Archive dao động từ **12 đến 48 giờ** (đối với phương thức Standard/Bulk).
-        *   *Tác động vận hành khi kiểm toán khẩn cấp (Operational Implication)*: Trong trường hợp cần thực hiện kiểm toán khẩn cấp (Emergency Audit) đối với các quyết định AI cũ hơn 90 ngày, dữ liệu **không thể truy vấn tức thì** qua Amazon Athena. Đội ngũ vận hành (Ops) phải thực hiện lệnh khôi phục (`RestoreObject`) thông qua AWS CLI/Console, chờ từ 12–48 giờ để dữ liệu được chuyển về lớp S3 Standard tạm thời (với retention tùy chọn, ví dụ: 7 ngày) trước khi chạy các câu lệnh SQL Athena. 
+        *   *Tác động vận hành khi kiểm toán khẩn cấp (Operational Implication)*: Trong trường hợp cần thực hiện kiểm toán khẩn cấp (Emergency Audit) đối với các quyết định AI cũ hơn 90 ngày, dữ liệu **không thể truy vấn tức thì** qua Amazon Athena. Đội ngũ vận hành (Ops) phải thực hiện lệnh khôi phục (`RestoreObject`) thông qua AWS CLI/Console, chờ từ 12–48 giờ để dữ liệu được chuyển về lớp S3 Standard tạm thời (với retention tùy chọn, ví dụ: 7 ngày) trước khi chạy các câu lệnh SQL Athena.
 *   **CloudTrail Logs**: Lưu trữ tại S3 bucket chuyên dụng kết hợp CloudTrail Lake với thời gian duy trì nhật ký cấu hình là 90 ngày.
-*   **Application Runtime & Ingest Logs**: Lưu trữ trực tiếp tại Amazon CloudWatch Logs nhằm phục vụ gỡ lỗi trực tiếp. Thời gian duy trì (retention) được cấu hình thống nhất là 7 ngày cho toàn bộ dịch vụ.
+*   **Application Runtime & Ingest Logs**: Lưu trữ trực tiếp tại Amazon CloudWatch Logs nhằm phục vụ gỡ lỗi trực tiếp. Thời gian duy trì (retention) được cấu hình thống nhất là **30 ngày** cho toàn bộ dịch vụ (Lambda, ECS) — đủ để cover một chu kỳ on-call đầy đủ và hỗ trợ forensics ngắn hạn.
 
 ### 5.3 Xử lý Dữ liệu Định danh Cá nhân (PII Handling)
 Để đảm bảo an toàn tuyệt đối cho dữ liệu giao dịch tài chính trong bối cảnh Fintech, hệ thống áp dụng cơ chế bảo vệ và lọc bỏ thông tin định danh cá nhân (PII) chủ động:

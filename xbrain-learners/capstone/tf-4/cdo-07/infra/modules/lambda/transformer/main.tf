@@ -38,8 +38,10 @@ locals {
 # ---------------------------------------------------------------------------
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_file = "${path.module}/lambda/transformer_handler.py"
-  output_path = "${path.module}/lambda/transformer_handler.zip"
+  # Trỏ thẳng vào thư mục chứa code
+  source_dir  = "${path.module}/lambda"
+  # Đổi tên file zip đầu ra để Terraform nhận diện sự thay đổi
+  output_path = "${path.module}/transformer_lambda_fixed.zip" 
 }
 
 # ---------------------------------------------------------------------------
