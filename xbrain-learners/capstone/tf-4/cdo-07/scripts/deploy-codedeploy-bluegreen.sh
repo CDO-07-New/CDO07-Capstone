@@ -65,7 +65,8 @@ new_task_definition="$(
         .requiresAttributes,
         .compatibilities,
         .registeredAt,
-        .registeredBy
+        .registeredBy,
+        .deregisteredAt
       )
     ' <<< "$task_definition_json"
 )"

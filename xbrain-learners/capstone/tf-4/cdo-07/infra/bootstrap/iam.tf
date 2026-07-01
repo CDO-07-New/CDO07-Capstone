@@ -183,11 +183,11 @@ data "aws_iam_policy_document" "github_deploy" {
 
     actions = [
       "application-autoscaling:*",
+      "apigateway:*",
       "cloudwatch:DeleteAlarms",
       "cloudwatch:DescribeAlarms",
       "cloudwatch:PutMetricAlarm",
       "codedeploy:*",
-      "dynamodb:*",
       "ec2:CreateTags",
       "ec2:DeleteTags",
       "ec2:Describe*",
@@ -195,6 +195,7 @@ data "aws_iam_policy_document" "github_deploy" {
       "ecs:*",
       "elasticloadbalancing:*",
       "events:*",
+      "lambda:*",
       "logs:*",
       "s3:*",
       "scheduler:*",
