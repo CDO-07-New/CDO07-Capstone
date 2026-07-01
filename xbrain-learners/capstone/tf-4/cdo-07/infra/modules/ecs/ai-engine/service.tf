@@ -34,6 +34,10 @@ module "ai_engine_service" {
   # Disable built-in autoscaling — managed by autoscaling.tf (aws_appautoscaling_*)
   enable_autoscaling = false
 
+  deployment_controller = {
+    type = "CODE_DEPLOY"
+  }
+
   # Use custom IAM roles (defined in iam.tf)
   create_task_exec_iam_role = false
   create_tasks_iam_role     = false
@@ -108,12 +112,6 @@ module "ai_engine_service" {
     }
   }
 
-  # Deployment circuit breaker: auto-rollback on failed deployments
-  deployment_circuit_breaker = {
-    enable   = true
-    rollback = true
-  }
-
   tags = var.tags
 
   ignore_task_definition_changes = true
@@ -141,6 +139,25 @@ resource "aws_lb_target_group" "ai_engine" {
     timeout             = 5
     healthy_threshold   = 2 # Contract: 2 consecutive 200
     unhealthy_threshold = 3 # Contract: 3 consecutive non-200
+  }
+
+  tags = var.tags
+}
+
+resource "aws_lb_target_group" "ai_engine_green" {
+  name        = "${var.environment}-ai-engine-green-tg"
+  port        = 8080
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/health"
+    matcher             = "200"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
   }
 
   tags = var.tags

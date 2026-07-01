@@ -1,5 +1,46 @@
 # K6 Load Testing Guide
 
+## ⚡ Quick Start (Cost-Effective Testing)
+
+**⚠️ CHÚ Ý**: Full tests chạy 2 giờ = TỐN TIỀN (~$6/run)!
+
+### SHORT Versions (Recommended for DEV/DEMO)
+
+Để tiết kiệm chi phí và thời gian, tôi đã tạo **SHORT versions** (15-20 phút thay vì 2 giờ):
+
+```bash
+# SHORT version - Chạy 20 phút thay vì 2 giờ
+k6 run -e ALB_DNS=http://<alb-dns> scenario-1-gradual-drift-SHORT.js
+
+Cost: ~$0.50 (thay vì $6)
+Time: 20 phút (thay vì 2 giờ)
+```
+
+| Test Type | Duration | Cost | Use Case |
+|-----------|----------|------|----------|
+| **SHORT** | 15-20 min | ~$0.50 | ✅ Dev, Demo, Smoke test |
+| **FULL** | 2 hours | ~$6 | ✅ Final evaluation only |
+
+**Khi nào dùng SHORT vs FULL?**
+
+**SHORT (15-20 phút)** - Dùng cho:
+- ✅ Daily development testing
+- ✅ Infrastructure validation  
+- ✅ Telemetry flow verification
+- ✅ Quick demos cho stakeholders
+- ✅ CI/CD smoke tests
+- ⚠️ AI accuracy có thể thấp hơn (ít data)
+
+**FULL (2 giờ)** - CHỈ dùng khi:
+- ✅ Production-grade evaluation
+- ✅ Accurate AI drift detection
+- ✅ Measure lead time (≥15 min requirement)
+- ✅ Calculate confusion matrix
+- ✅ Final capstone demo
+- ⚠️ Expensive! Plan ahead
+
+---
+
 ## 📊 Test Scenarios Overview
 
 | Scenario | Duration | Load Pattern | Purpose | Detection Target |

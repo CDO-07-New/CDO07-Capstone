@@ -55,13 +55,19 @@ module "sns_to_slack" {
   project     = local.project
   environment = local.environment
 
-  # Use SSM Parameter Store for webhook URL (same pattern as prod).
-  # Create the parameter manually once before apply:
+  # ⚠️ SECURITY: Webhook URL is NEVER hardcoded here.
+  # Store it once manually in SSM Parameter Store (SecureString, KMS-encrypted):
+  #
   #   aws ssm put-parameter \
-  #     --name /tf4-cdo07/sandbox/slack-webhook-url \
-  #     --type SecureString --value "https://hooks.slack.com/services/..." \
-  #     --key-id alias/tf4-cdo07-bootstrap
+  #     --name "/tf4-cdo07/sandbox/slack-webhook-url" \
+  #     --type "SecureString" \
+  #     --value "https://hooks.slack.com/services/xxx/yyy/zzz" \
+  #     --key-id "alias/tf4-cdo07-bootstrap" \
+  #     --region us-east-1
+  #
+  # Terraform will NOT manage the value (only reads ARN at runtime via Lambda).
   slack_webhook_parameter_name = "/${local.project}/${local.environment}/slack-webhook-url"
+  slack_webhook_url            = null # Never put the URL here
   kms_key_arn                  = local.kms_key_arn
 
   tags = local.common_tags
@@ -97,10 +103,11 @@ module "audit_s3" {
 module "streaming" {
   source = "../../modules/streaming"
 
-  project     = local.project
-  environment = local.environment
-  kms_key_arn = local.kms_key_arn
-  tags        = local.common_tags
+  project             = local.project
+  environment         = local.environment
+  kms_key_arn         = local.kms_key_arn
+  alert_sns_topic_arn = module.sns_to_slack.sns_topic_arn
+  tags                = local.common_tags
 }
 
 # --- Layer 3c: Mock Services ---
@@ -116,13 +123,13 @@ module "mock_services" {
   kinesis_stream_arn    = module.streaming.stream_arn
   kinesis_stream_name   = module.streaming.stream_name
   kms_key_arn           = local.kms_key_arn
-  
+
   # ECR Image URIs - Real mock services instead of nginx placeholders
   ecr_image_uri_payment = local.ecr_image_uri_payment
   ecr_image_uri_ledger  = local.ecr_image_uri_ledger
   ecr_image_uri_fraud   = local.ecr_image_uri_fraud
-  
-  tags                  = local.common_tags
+
+  tags = local.common_tags
 }
 
 # --- Layer 3d: AI Engine ---
@@ -140,9 +147,8 @@ module "ai_engine" {
   audit_s3_bucket        = module.audit_s3.audit_bucket_name
   audit_s3_bucket_arn    = module.audit_s3.audit_bucket_arn
   kms_key_arn            = local.kms_key_arn
-  
   ecr_image_uri          = local.ecr_image_uri_ai
-  
+  alert_sns_topic_arn    = module.sns_to_slack.sns_topic_arn
   tags                   = local.common_tags
 }
 
@@ -161,9 +167,10 @@ module "transformer" {
   influxdb_bucket     = module.audit_s3.influxdb_bucket
   influxdb_org        = module.audit_s3.influxdb_org
 
-  subnet_ids         = module.networking.private_subnets
-  security_group_ids = [module.networking.lambda_security_group_id]
-  tags               = local.common_tags
+  subnet_ids          = module.networking.private_subnets
+  security_group_ids  = [module.networking.lambda_security_group_id]
+  alert_sns_topic_arn = module.sns_to_slack.sns_topic_arn
+  tags                = local.common_tags
 }
 
 # --- Layer 4b: Window Feeder ---
@@ -186,13 +193,13 @@ module "window_feeder" {
 
   environment_variables = {
     # InfluxDB connection (replaces Timestream LiveAnalytics)
-    INFLUXDB_URL                     = module.audit_s3.influxdb_endpoint_url
-    INFLUXDB_BUCKET                  = module.audit_s3.influxdb_bucket
-    INFLUXDB_ORG                     = module.audit_s3.influxdb_org
-    INFLUXDB_SECRET_ARN              = module.audit_s3.influxdb_secret_arn
-    INFLUXDB_QUERY_WINDOW            = "2h"
-    METRIC_WINDOW_STEP_SECONDS       = "300"
-    FORWARD_FILL_LOOKBACK_SECONDS    = "900"
+    INFLUXDB_URL                  = module.audit_s3.influxdb_endpoint_url
+    INFLUXDB_BUCKET               = module.audit_s3.influxdb_bucket
+    INFLUXDB_ORG                  = module.audit_s3.influxdb_org
+    INFLUXDB_SECRET_ARN           = module.audit_s3.influxdb_secret_arn
+    INFLUXDB_QUERY_WINDOW         = "2h"
+    METRIC_WINDOW_STEP_SECONDS    = "300"
+    FORWARD_FILL_LOOKBACK_SECONDS = "900"
     # AI Engine URL - Direct to Internal ALB (SG-to-SG authorization)
     AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
@@ -217,7 +224,8 @@ module "window_feeder" {
     ]
   })
 
-  tags = local.common_tags
+  alert_sns_topic_arn = module.sns_to_slack.sns_topic_arn
+  tags                = local.common_tags
 }
 
 # --- Layer 4c: Fail-Open Fallback ---
