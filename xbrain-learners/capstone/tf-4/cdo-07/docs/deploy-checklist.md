@@ -264,7 +264,36 @@ Fallback handler tự đóng gói trong Terraform qua `archive_file` — không 
 
 ---
 
-## PHASE 3 — Timestream InfluxDB (managed by Terraform — không cần CLI thủ công)
+## PHASE 3 — VPC Endpoints & Timestream InfluxDB
+
+### 3.0 VPC Endpoints Verification
+
+> **VPC Endpoints thay thế NAT Gateway** — tiết kiệm ~$32/tháng, bảo mật hơn.
+
+VPC Endpoints được tạo tự động bởi Terraform trong `modules/networking/vpc_endpoints.tf`:
+
+| Endpoint Type | Service | Purpose |
+|---|---|---|
+| **Interface** | ecr.api | Pull ECS container images (API) |
+| **Interface** | ecr.dkr | Pull ECS container images (Docker) |
+| **Interface** | logs | CloudWatch Logs for Lambda & ECS |
+| **Interface** | ssm | Parameter Store (Slack webhook, InfluxDB config) |
+| **Interface** | kms | Encryption/Decryption |
+| **Interface** | kinesis-streams | Mock services → Kinesis telemetry |
+| **Interface** | secretsmanager | InfluxDB token, Grafana API key |
+| **Gateway** | s3 | Baseline/Audit buckets (no cost) |
+
+**Total**: 8 endpoints (~$50/month, nhưng KHÔNG CẦN NAT Gateway)
+
+| # | Kiểm tra | Command |
+|---|---|---|
+| ⬜ | VPC Endpoints được tạo | `aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=<vpc-id>"` |
+| ⬜ | Security Group `vpce` allows traffic from Lambda & ECS | `aws ec2 describe-security-groups --group-ids <vpce-sg-id>` |
+| ⬜ | Private DNS enabled cho Interface Endpoints | Output từ command trên |
+
+---
+
+### 3.1 Timestream InfluxDB (managed by Terraform — không cần CLI thủ công)
 
 > **ĐÃ FIX**: Codebase đã migration từ Timestream for LiveAnalytics (bị blocked: `AccessDeniedException: Only existing Timestream for LiveAnalytics customers can access the service`) sang **Amazon Timestream for InfluxDB**.
 >
@@ -272,7 +301,7 @@ Fallback handler tự đóng gói trong Terraform qua `archive_file` — không 
 >
 > **KHÔNG cần chạy `aws timestream-write create-database` hay `aws timestream-write create-table` nữa.**
 
-### 3.1 Những gì Terraform tự tạo
+### 3.2 Những gì Terraform tự tạo
 
 | Resource | Tên | Ghi chú |
 |---|---|---|
@@ -282,7 +311,7 @@ Fallback handler tự đóng gói trong Terraform qua `archive_file` — không 
 | `aws_ssm_parameter` | `/<project>/<env>/influxdb-bucket` | `service-metrics` |
 | `aws_ssm_parameter` | `/<project>/<env>/influxdb-org` | `cdo-07` |
 
-### 3.2 Auth flow
+### 3.3 Auth flow
 
 AWS tự động tạo Secrets Manager entry khi tạo InfluxDB instance, chứa JSON:
 ```json
@@ -290,7 +319,7 @@ AWS tự động tạo Secrets Manager entry khi tạo InfluxDB instance, chứa
 ```
 Lambda Transformer và Lambda Window Feeder đọc `operator_token` từ đó tại cold start.
 
-### 3.3 Verify sau `terraform apply`
+### 3.4 Verify sau `terraform apply`
 
 ```bash
 # Kiểm tra instance tồn tại
@@ -311,7 +340,7 @@ aws ssm get-parameter --name /tf4-cdo07/sandbox/influxdb-secret-arn
 | ⬜ | Lambda Transformer env vars chứa `INFLUXDB_URL`, `INFLUXDB_BUCKET`, `INFLUXDB_ORG`, `INFLUXDB_SECRET_ARN` | `aws lambda get-function-configuration --function-name tf4-cdo07-sandbox-transformer` |
 | ⬜ | Lambda Window Feeder env vars chứa `INFLUXDB_URL` (không còn `TIMESTREAM_*`) | `aws lambda get-function-configuration --function-name tf4-cdo07-sandbox-window-feeder` |
 
-### 3.4 Smoke test InfluxDB write/read
+### 3.5 Smoke test InfluxDB write/read
 
 ```bash
 # Lấy endpoint và token
@@ -337,6 +366,133 @@ curl -s \
 # Mong đợi: CSV rows với data
 ```
 
+
+---
+
+## PHASE 3.6 — Grafana Setup (OPTIONAL - For Visualization)
+
+> **⚠️ Grafana KHÔNG BẮT BUỘC** cho core functionality. System hoạt động đầy đủ với:
+> - CloudWatch Logs (Lambda & ECS logs)
+> - S3 Audit logs (AI predictions)
+> - Slack alerts (drift notifications)
+>
+> Grafana chỉ cần cho **visualization và demo purposes**.
+
+### 3.6.1 Amazon Managed Grafana Setup
+
+**Option A: Use Amazon Managed Grafana (Recommended for Production)**
+
+```bash
+# Create Managed Grafana workspace (Manual via AWS Console hoặc CLI)
+aws grafana create-workspace \
+  --account-access-type CURRENT_ACCOUNT \
+  --authentication-providers AWS_SSO \
+  --permission-type SERVICE_MANAGED \
+  --workspace-name "cdo-07-sandbox-grafana" \
+  --workspace-description "CDO-07 Foresight Lens Monitoring" \
+  --workspace-data-sources TIMESTREAM \
+  --workspace-notification-destinations SNS
+
+# Output: workspace ID và URL
+```
+
+| # | Việc cần làm | Ghi chú |
+|---|---|---|
+| ⬜ | Create Managed Grafana workspace | Cost: ~$9/month per active user |
+| ⬜ | Configure Timestream InfluxDB data source | Connection: InfluxDB endpoint from SSM |
+| ⬜ | Import dashboard template | Dashboard JSON (nếu team có sẵn) |
+| ⬜ | Create API key for annotations | Store in SSM Parameter Store |
+| ⬜ | Configure Grafana variables | `grafana_host`, `grafana_api_key_parameter` in locals.tf |
+
+**Option B: Skip Grafana for Now (Zero Cost)**
+
+| # | Việc cần làm | Ghi chú |
+|---|---|---|
+| ✅ | Use CloudWatch Logs Insights | Query Lambda logs: `/aws/lambda/tf4-cdo07-sandbox-window-feeder` |
+| ✅ | Use S3 Audit logs | Browse: `s3://<audit-bucket>/window-feeder/` |
+| ✅ | Use Slack alerts | All drift alerts go to Slack |
+| ✅ | Demo without Grafana | Hệ thống vẫn hoạt động đầy đủ |
+
+### 3.6.2 Grafana Configuration (if using Managed Grafana)
+
+**Add InfluxDB Data Source**:
+```
+Settings → Data Sources → Add data source
+- Type: InfluxDB
+- Query Language: Flux
+- URL: <InfluxDB endpoint từ SSM>
+- Auth: Basic Auth
+- User: admin
+- Password: <từ Secrets Manager>
+- Organization: cdo-07
+- Default Bucket: service-metrics
+```
+
+**Create Dashboard**:
+```
+Panels to add:
+1. CPU Usage (all services) - Time series
+2. Memory Usage (all services) - Time series  
+3. API Latency (all services) - Time series
+4. Active Connections (all services) - Gauge
+5. AI Predictions - Annotations (from S3 audit logs)
+6. Drift Alerts - Annotations (from SNS/Slack)
+```
+
+**Flux Query Example**:
+```flux
+from(bucket: "service-metrics")
+  |> range(start: -2h)
+  |> filter(fn: (r) => r["_measurement"] == "cpu_usage_percent")
+  |> filter(fn: (r) => r["service_name"] == "payment-gw")
+  |> aggregateWindow(every: 1m, fn: mean)
+```
+
+### 3.6.3 Grafana Annotations (Push from Window Feeder)
+
+**⚠️ CHƯA IMPLEMENT** - Window Feeder hiện chưa push annotations lên Grafana.
+
+Nếu muốn thêm Grafana annotations:
+
+1. **Update Window Feeder Lambda code** (`lambda/window-feeder/app.py`):
+```python
+def push_grafana_annotation(prediction_result):
+    if not GRAFANA_API_KEY:
+        return  # Skip if Grafana not configured
+    
+    annotation = {
+        "time": int(time.time() * 1000),
+        "tags": ["drift-detection", prediction_result["service_id"]],
+        "text": f"Drift detected: {prediction_result['recommendation']}"
+    }
+    
+    requests.post(
+        f"{GRAFANA_HOST}/api/annotations",
+        headers={"Authorization": f"Bearer {GRAFANA_API_KEY}"},
+        json=annotation
+    )
+```
+
+2. **Add environment variables** to `window_feeder` module in `sandbox/main.tf`:
+```hcl
+environment_variables = {
+  # ... existing vars ...
+  GRAFANA_HOST            = var.grafana_host  # https://g-xxx.grafana-workspace.us-east-1.amazonaws.com
+  GRAFANA_API_KEY_SSM     = var.grafana_api_key_parameter  # /tf4-cdo07/sandbox/grafana-api-key
+}
+```
+
+3. **Add IAM permission** to read Grafana API key:
+```hcl
+{ 
+  Sid = "ReadGrafanaAPIKey", 
+  Effect = "Allow", 
+  Action = ["ssm:GetParameter"], 
+  Resource = "arn:aws:ssm:${local.aws_region}:*:parameter/tf4-cdo07/sandbox/grafana-api-key"
+}
+```
+
+**Status**: ⚠️ Grafana annotations là **nice-to-have**, không bắt buộc cho demo.
 
 ---
 
@@ -595,15 +751,15 @@ HOẶC: Actions → deploy-staging → Run workflow
 | # | Test | Kết quả mong đợi |
 |---|---|---|
 | ⬜ | Mock Services gửi metric liên tục vào Kinesis | Kinesis metrics > 0 records/min |
-| ⬜ | Lambda Transformer ghi được vào Timestream | `select count(*) from staging table` > 0 |
+| ⬜ | Lambda Transformer ghi được vào InfluxDB | Query InfluxDB return rows > 0 |
 | ⬜ | Window Feeder gọi được AI Engine `/v1/predict` | AI trả JSON `{drift_detected, confidence, recommendation}` |
 | ⬜ | Kết quả AI ghi audit vào S3 | File xuất hiện trong `s3://<audit-bucket>/window-feeder/` |
 | ⬜ | Drift alert gửi lên Slack khi `drift_detected=true` | Slack message xuất hiện |
 | ⬜ | **Fail-Open test**: Tắt AI Engine ECS service → Window Feeder timeout → Fallback Lambda kích hoạt | SNS alert + Slack message từ `fail_open_fallback` |
 | ⬜ | **Cost Circuit Breaker test**: Set SSM param `inference_enabled=false` → Window Feeder exit sớm | Log: `Inference disabled via SSM parameter` |
 | ⬜ | Reset: Set SSM param `inference_enabled=true` | Window Feeder hoạt động trở lại |
-| ⬜ | Grafana dashboard hiển thị metric từ Timestream | Dashboard load, không 404 |
-| ⬜ | Grafana annotation xuất hiện khi Fallback trigger | Annotation marker trên dashboard |
+| ⬜ | **(OPTIONAL) Grafana dashboard hiển thị metric từ InfluxDB** | Dashboard load, không 404 (nếu đã setup) |
+| ⬜ | **(OPTIONAL) Grafana annotation xuất hiện khi có drift** | Annotation marker trên dashboard (nếu implement) |
 
 ### 6.1 Load test (k6) — 100 RPS
 
@@ -660,7 +816,7 @@ Actions → deploy-prod → Run workflow
 | ⬜ | CodeDeploy deployment status: SUCCEEDED | |
 | ⬜ | Blue environment đã terminate sau bake period | |
 | ⬜ | Window Feeder đang chạy theo schedule 5 phút | |
-| ⬜ | Grafana prod dashboard accessible | |
+| ⬜ | **(OPTIONAL) Grafana prod dashboard accessible** | Nếu đã setup |
 
 
 ---
