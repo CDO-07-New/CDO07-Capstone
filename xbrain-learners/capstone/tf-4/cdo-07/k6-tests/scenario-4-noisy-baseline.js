@@ -23,7 +23,7 @@ import { Rate, Trend, Counter } from 'k6/metrics';
 import {
   BASE_URL,
   ENDPOINTS,
-  HEADERS,
+  generateHeaders,
   generatePaymentPayload,
   generateLedgerPayload,
   generateFraudPayload
@@ -131,8 +131,8 @@ export function testPaymentService(isSpike) {
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
   
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url, { headers: HEADERS, timeout: '10s' })
-    : http.post(endpoint.url, endpoint.payload, { headers: HEADERS, timeout: '10s' });
+    ? http.get(endpoint.url,  { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } })
+    : http.post(endpoint.url, endpoint.payload, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } });
   
   const success = check(res, {
     'payment status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -156,8 +156,8 @@ export function testLedgerService(isSpike) {
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
   
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url, { headers: HEADERS, timeout: '10s' })
-    : http.post(endpoint.url, endpoint.payload, { headers: HEADERS, timeout: '10s' });
+    ? http.get(endpoint.url,  { headers: generateHeaders('ledger-svc'), timeout: '10s', tags: { tenant: 'ledger-svc', endpoint: 'ledger' } })
+    : http.post(endpoint.url, endpoint.payload, { headers: generateHeaders('ledger-svc'), timeout: '10s', tags: { tenant: 'ledger-svc', endpoint: 'ledger' } });
   
   const success = check(res, {
     'ledger status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -193,8 +193,8 @@ export function testFraudService(isSpike) {
   }
   
   const res = selectedEndpoint.method === 'GET'
-    ? http.get(selectedEndpoint.url, { headers: HEADERS, timeout: '10s' })
-    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: HEADERS, timeout: '10s' });
+    ? http.get(selectedEndpoint.url,  { headers: generateHeaders('fraud-detection'), timeout: '10s', tags: { tenant: 'fraud-detection', endpoint: 'fraud' } })
+    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: generateHeaders('fraud-detection'), timeout: '10s', tags: { tenant: 'fraud-detection', endpoint: 'fraud' } });
   
   const success = check(res, {
     'fraud status is 200': (r) => r.status === 200,

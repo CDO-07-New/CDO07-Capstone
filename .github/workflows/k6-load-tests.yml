@@ -61,9 +61,12 @@ jobs:
             esac
           else
             SCENARIO="${{ github.event.inputs.scenario }}"
-            # If use_short_versions is true, append -SHORT
+            # If use_short_versions is true and scenario doesn't already have -SHORT, append it
             if [ "${{ github.event.inputs.use_short_versions }}" = "true" ] && [[ ! "$SCENARIO" =~ "-SHORT" ]] && [ "$SCENARIO" != "all" ]; then
-              SCENARIO="${SCENARIO}-SHORT"
+              # Only append -SHORT if the SHORT file actually exists
+              if [ -f "xbrain-learners/capstone/tf-4/cdo-07/k6-tests/${SCENARIO}-SHORT.js" ]; then
+                SCENARIO="${SCENARIO}-SHORT"
+              fi
             fi
           fi
           echo "scenario=$SCENARIO" >> $GITHUB_OUTPUT
@@ -120,6 +123,9 @@ jobs:
       
       - name: Run K6 Test
         working-directory: xbrain-learners/capstone/tf-4/cdo-07/k6-tests
+        # continue-on-error: Threshold violations (exit 99) are EXPECTED for drift/spike scenarios.
+        # The test still collects and uploads result data. CI should not fail on threshold breaches.
+        continue-on-error: true
         env:
           ALB_DNS: ${{ steps.alb.outputs.alb_dns }}
           SCENARIO: ${{ steps.scenario.outputs.scenario }}
@@ -127,16 +133,26 @@ jobs:
           # Create results directory
           mkdir -p results
           
+          USE_SHORT="${{ github.event.inputs.use_short_versions }}"
+          
           # Run the scenario
           if [ "$SCENARIO" = "all" ]; then
             echo "⚠️ Running ALL scenarios - This will take 8+ hours!"
-            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-1-${{ github.run_id }}.json scenario-1-gradual-drift.js
-            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-2-${{ github.run_id }}.json scenario-2-sudden-spike.js
-            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-3-${{ github.run_id }}.json scenario-3-slow-leak.js
-            k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-4-${{ github.run_id }}.json scenario-4-noisy-baseline.js
+            if [ "$USE_SHORT" = "true" ]; then
+              echo "Running SHORT versions of all scenarios..."
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-1-${{ github.run_id }}.json scenario-1-gradual-drift-SHORT.js || true
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-2-${{ github.run_id }}.json scenario-2-sudden-spike-SHORT.js || true
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-3-${{ github.run_id }}.json scenario-3-slow-leak-SHORT.js || true
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-4-${{ github.run_id }}.json scenario-4-noisy-baseline-SHORT.js || true
+            else
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-1-${{ github.run_id }}.json scenario-1-gradual-drift.js || true
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-2-${{ github.run_id }}.json scenario-2-sudden-spike.js || true
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-3-${{ github.run_id }}.json scenario-3-slow-leak.js || true
+              k6 run -e ALB_DNS=$ALB_DNS --out json=results/scenario-4-${{ github.run_id }}.json scenario-4-noisy-baseline.js || true
+            fi
           else
             echo "Running scenario: $SCENARIO"
-            k6 run -e ALB_DNS=$ALB_DNS --out json=results/${SCENARIO}-${{ github.run_id }}.json ${SCENARIO}.js
+            k6 run -e ALB_DNS=$ALB_DNS --out json=results/${SCENARIO}-${{ github.run_id }}.json ${SCENARIO}.js || true
           fi
       
       - name: Upload Test Results

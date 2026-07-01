@@ -22,7 +22,7 @@ import { Rate, Trend, Gauge } from 'k6/metrics';
 import {
   BASE_URL,
   ENDPOINTS,
-  HEADERS,
+  generateHeaders,
   generatePaymentPayload,
   generateLedgerPayload,
   generateFraudPayload
@@ -80,23 +80,18 @@ export default function(data) {
 }
 
 export function testPaymentService(leakFactor) {
-  // Generate payload with increasing size (simulate cached data accumulation)
-  const basePayload = JSON.parse(generatePaymentPayload());
-  
-  // Add artificial padding to simulate memory bloat
+  const basePayload = JSON.parse(generatePaymentPayload('payment-gw'));
   basePayload.metadata = {
     iteration: iterationCount,
-    cached_data: 'x'.repeat(Math.floor(100 * leakFactor)), // Growing metadata
+    cached_data: 'x'.repeat(Math.floor(100 * leakFactor)),
     timestamp: Date.now()
   };
-  
   const payload = JSON.stringify(basePayload);
   payloadSize.add(payload.length);
-  
   const res = http.post(
     `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`,
     payload,
-    { headers: HEADERS, timeout: '15s' }
+    { headers: generateHeaders('payment-gw'), timeout: '15s', tags: { tenant: 'payment-gw', endpoint: 'payment' } }
   );
   
   const success = check(res, {
@@ -129,7 +124,7 @@ export function testLedgerService(leakFactor) {
   const res = http.post(
     `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`,
     payload,
-    { headers: HEADERS, timeout: '15s' }
+    { headers: generateHeaders('ledger-svc'), timeout: '15s', tags: { tenant: 'ledger-svc', endpoint: 'ledger' } }
   );
   
   const success = check(res, {
@@ -158,7 +153,7 @@ export function testFraudService(leakFactor) {
   const res = http.post(
     `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`,
     payload,
-    { headers: HEADERS, timeout: '15s' }
+    { headers: generateHeaders('fraud-detection'), timeout: '15s', tags: { tenant: 'fraud-detection', endpoint: 'fraud' } }
   );
   
   const success = check(res, {

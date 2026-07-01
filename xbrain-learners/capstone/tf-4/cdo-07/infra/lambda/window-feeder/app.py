@@ -497,6 +497,23 @@ def invoke_ai_engine(metrics_data: dict) -> dict:
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         logger.error("AI Engine HTTP %d: %s", exc.code, body)
+        # HTTP 422: signal_window < 120 points (insufficient history, e.g. fresh deploy).
+        # This is expected in the first 2h after a new deployment. Do NOT crash.
+        # Publish a soft notice and return a "no-data" response instead.
+        if exc.code == 422:
+            logger.warning(
+                "AI Engine rejected payload (422 Unprocessable): probably insufficient metric history "
+                "(signal_window < 120 points). Skipping prediction for this cycle. "
+                "System will auto-recover once 2h of data has accumulated."
+            )
+            return {
+                "anomaly": False,
+                "severity": 0.0,
+                "recommendation": None,
+                "reasoning": "Insufficient metric history (< 120 min). Prediction skipped.",
+                "fallback": True,
+                "fallback_reason": "signal_window_too_short",
+            }
         raise
     except urllib.error.URLError as exc:
         logger.error("Failed to invoke AI Engine: %s", exc)
