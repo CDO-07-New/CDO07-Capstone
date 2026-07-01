@@ -164,8 +164,8 @@ module "window_feeder" {
   package_path         = "${path.module}/../../lambda/window-feeder/build/window-feeder.zip"
   handler              = "app.handler"
   runtime              = "python3.12"
-  timeout_seconds      = 90
-  memory_mb            = 2048
+  timeout_seconds      = 300
+  memory_mb            = 3008
   reserved_concurrency = -1 # prod: use unreserved concurrency pool
   subnet_ids           = module.networking.private_subnets
   security_group_ids   = [module.networking.lambda_security_group_id]
@@ -182,7 +182,7 @@ module "window_feeder" {
     INFLUXDB_QUERY_WINDOW            = "2h"
     METRIC_WINDOW_STEP_SECONDS       = "300"
     FORWARD_FILL_LOOKBACK_SECONDS    = "900"
-    AI_ENGINE_PREDICT_URL            = "${module.ai_predict_api.invoke_url}/v1/predict"
+    AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "60"
     AI_ENGINE_SIGV4_SERVICE          = "execute-api"
     DEPLOYMENT_VERSION               = "${local.project}-${local.environment}"
