@@ -26,6 +26,11 @@ const kinesis = new AWS.Kinesis({ region: AWS_REGION });
 // Middleware
 app.use(express.json());
 
+// Helper to extract tenant_id from request
+function getTenantId(req) {
+  return req.headers['x-tenant-id'] || req.body?.tenant_id || 'tier-1';
+}
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'healthy', service: SERVICE_NAME });
@@ -40,9 +45,10 @@ app.post('/ledger/entry', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('create_entry', latency);
+  await emitMetrics('create_entry', latency, tenantId);
   
   res.status(201).json({
     entry_id: `ledger_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -62,9 +68,10 @@ app.get('/ledger/balance/:accountId', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('balance_query', latency);
+  await emitMetrics('balance_query', latency, tenantId);
   
   res.status(200).json({
     account_id: req.params.accountId,
@@ -82,9 +89,10 @@ app.get('/ledger/history/:accountId', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('history_query', latency);
+  await emitMetrics('history_query', latency, tenantId);
   
   // Generate mock transaction history
   const history = Array.from({ length: 10 }, (_, i) => ({
@@ -109,9 +117,10 @@ app.post('/ledger/reconcile', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('reconciliation', latency);
+  await emitMetrics('reconciliation', latency, tenantId);
   
   res.status(200).json({
     reconciliation_id: `recon_${Date.now()}`,
@@ -125,7 +134,7 @@ app.post('/ledger/reconcile', async (req, res) => {
  * Emit telemetry metrics to Kinesis
  * Ledger service typically has higher memory usage due to data processing
  */
-async function emitMetrics(operation, latency) {
+async function emitMetrics(operation, latency, tenantId = 'tier-1') {
   if (!KINESIS_STREAM_NAME) {
     console.log('[WARN] KINESIS_STREAM_NAME not set, skipping telemetry');
     return;
@@ -141,7 +150,7 @@ async function emitMetrics(operation, latency) {
   const metrics = [
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
       value: Math.min(100, cpuUsage + Math.random() * 15), // Slightly higher CPU
@@ -149,7 +158,7 @@ async function emitMetrics(operation, latency) {
     },
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
       value: Math.min(100, memUsage + ledgerMemAdjustment),
@@ -157,18 +166,37 @@ async function emitMetrics(operation, latency) {
     },
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'api_latency_ms',
       value: latency,
       labels: { operation }
+    },
+    {
+      ts: timestamp,
+      tenant_id: tenantId,
+      service_id: SERVICE_NAME,
+      // Ledger SQS queue depth - grows when entry/reconcile workload exceeds worker capacity
+      // This is the PRIMARY signal for TF4 slow-leak and gradual-drift scenarios
+      metric_type: 'queue_depth',
+      value: Math.max(0, Math.floor((latency / 50) * (1 + cpuUsage / 200) * (1 + Math.random() * 0.4))),
+      labels: { operation, queue_name: 'ledger-events-sqs' }
+    },
+    {
+      ts: timestamp,
+      tenant_id: tenantId,
+      service_id: SERVICE_NAME,
+      // DB connection pool % - grows under reconcile load (ledger-svc is DB-heavy)
+      metric_type: 'db_connection_pool_pct',
+      value: Math.min(100, 30 + (latency / 30) + Math.random() * 10),
+      labels: { operation, db_type: 'mysql' }
     }
   ];
 
   try {
     const records = metrics.map(metric => ({
       Data: JSON.stringify(metric),
-      PartitionKey: 'tier-1' // Use tenant_id for proper multi-tenant isolation
+      PartitionKey: tenantId // Use tenant_id for proper multi-tenant isolation
     }));
 
     await kinesis.putRecords({
@@ -176,7 +204,7 @@ async function emitMetrics(operation, latency) {
       StreamName: KINESIS_STREAM_NAME
     }).promise();
 
-    console.log(`[TELEMETRY] Sent ${records.length} metrics for ${operation}`);
+    console.log(`[TELEMETRY] Sent ${records.length} metrics for ${operation} (tenant: ${tenantId})`);
   } catch (error) {
     console.error('[ERROR] Failed to send telemetry:', error.message);
   }
