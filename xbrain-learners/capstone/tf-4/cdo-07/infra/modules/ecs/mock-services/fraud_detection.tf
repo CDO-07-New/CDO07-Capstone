@@ -5,8 +5,9 @@ module "fraud_detection" {
   name        = "fraud-detection"
   cluster_arn = module.ecs_cluster.cluster_arn
 
-  cpu    = 256 # 0.25 vCPU
-  memory = 512 # 0.5 GB
+  cpu           = 256 # 0.25 vCPU
+  memory        = 512 # 0.5 GB
+  desired_count = 1
 
   # Use custom IAM roles (defined in iam.tf)
   create_task_exec_iam_role = false
