@@ -64,7 +64,7 @@ resource "aws_codedeploy_deployment_group" "ai_engine" {
   load_balancer_info {
     target_group_pair_info {
       prod_traffic_route {
-        listener_arns = [var.alb_http_listener_arn]
+        listener_arns = [aws_lb_listener_rule.ai_engine.arn]
       }
 
       target_group {
