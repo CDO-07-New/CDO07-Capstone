@@ -336,13 +336,15 @@ resource "aws_budgets_budget" "monthly_cost" {
   time_unit    = "MONTHLY"
 
   dynamic "notification" {
-    for_each = compact([
-      aws_sns_topic.budget_warning.arn,
-      var.alert_sns_topic_arn
-    ])
+    for_each = {
+      for idx, arn in compact([
+        aws_sns_topic.budget_warning.arn,
+        var.alert_sns_topic_arn
+      ]) : idx => arn
+    }
     content {
       comparison_operator       = "GREATER_THAN"
-      threshold                 = var.warning_threshold_percent
+      threshold                 = var.warning_threshold_percent + (notification.key * 0.01)
       threshold_type            = "PERCENTAGE"
       notification_type         = "ACTUAL"
       subscriber_sns_topic_arns = [notification.value]
@@ -350,13 +352,15 @@ resource "aws_budgets_budget" "monthly_cost" {
   }
 
   dynamic "notification" {
-    for_each = compact([
-      aws_sns_topic.budget_hard_trigger.arn,
-      var.alert_sns_topic_arn
-    ])
+    for_each = {
+      for idx, arn in compact([
+        aws_sns_topic.budget_hard_trigger.arn,
+        var.alert_sns_topic_arn
+      ]) : idx => arn
+    }
     content {
       comparison_operator       = "GREATER_THAN"
-      threshold                 = var.hard_threshold_percent
+      threshold                 = var.hard_threshold_percent + (notification.key * 0.01)
       threshold_type            = "PERCENTAGE"
       notification_type         = "ACTUAL"
       subscriber_sns_topic_arns = [notification.value]
