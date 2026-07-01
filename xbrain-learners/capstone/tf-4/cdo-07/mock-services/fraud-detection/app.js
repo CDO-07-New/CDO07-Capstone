@@ -141,18 +141,11 @@ app.post('/fraud/feedback', async (req, res) => {
 });
 
 /**
- * CPU-intensive simulation for ML inference
- * Mimics matrix operations in fraud detection models
+ * CPU-intensive simulation for ML inference (asynchronous/non-blocking)
+ * Mimics processing duration without locking Node.js single thread
  */
 function burnCPU(durationMs) {
-  return new Promise(resolve => {
-    const end = Date.now() + durationMs;
-    while (Date.now() < end) {
-      // Simulate computation
-      Math.sqrt(Math.random() * 1000000);
-    }
-    resolve();
-  });
+  return new Promise(resolve => setTimeout(resolve, durationMs));
 }
 
 /**
@@ -178,7 +171,10 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
-      value: Math.min(100, cpuUsage + fraudCPUAdjustment), // Higher CPU for ML
+      // Simulate CPU load based on request latency:
+      // latency <= 100ms -> cpu ~ 30-45% (normal ML baseline)
+      // latency >= 400ms -> cpu ~ 85-100% (overloaded ML serving)
+      value: Math.min(100, Math.max(15, 20 + (latency / 5) + Math.random() * 10)),
       labels: { operation, batch_size: batchSize }
     },
     {

@@ -138,7 +138,10 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
-      value: Math.min(100, cpuUsage + Math.random() * 10),
+      // Simulate CPU load based on request latency:
+      // latency <= 100ms -> cpu ~ 20-35%
+      // latency >= 500ms -> cpu ~ 80-100%
+      value: Math.min(100, Math.max(10, 15 + (latency / 8) + Math.random() * 10)),
       labels: { operation }
     },
     {
@@ -146,7 +149,8 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
-      value: Math.min(100, memUsage + Math.random() * 5),
+      // Memory slightly increases under latency/queuing pressure
+      value: Math.min(100, Math.max(15, 25 + (latency / 12) + Math.random() * 5)),
       labels: { operation }
     },
     {

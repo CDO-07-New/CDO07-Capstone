@@ -153,7 +153,10 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
-      value: Math.min(100, cpuUsage + Math.random() * 15), // Slightly higher CPU
+      // Simulate CPU load based on request latency:
+      // latency <= 100ms -> cpu ~ 25-40%
+      // latency >= 500ms -> cpu ~ 80-100%
+      value: Math.min(100, Math.max(15, 20 + (latency / 6) + Math.random() * 10)),
       labels: { operation }
     },
     {
@@ -161,7 +164,8 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
-      value: Math.min(100, memUsage + ledgerMemAdjustment),
+      // Memory increases under database connection leak simulation
+      value: Math.min(100, Math.max(15, 30 + (latency / 10) + Math.random() * 5)),
       labels: { operation }
     },
     {
