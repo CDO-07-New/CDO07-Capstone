@@ -62,6 +62,17 @@ module "payment_gw" {
       cidr_blocks = ["0.0.0.0/0"]
     }
   }
+
+  # Load Balancer Configuration
+  load_balancer = {
+    service = {
+      target_group_arn = aws_lb_target_group.payment.arn
+      container_name   = "payment-gw"
+      container_port   = 3000
+    }
+  }
+
+  depends_on = [aws_lb_target_group.payment]
 }
 
 resource "aws_lb_target_group" "payment" {
