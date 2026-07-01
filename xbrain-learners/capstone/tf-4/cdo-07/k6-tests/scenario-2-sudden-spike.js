@@ -106,8 +106,8 @@ export function testPaymentService() {
   }
   
   const res = selectedEndpoint.method === 'GET'
-    ? http.get(selectedEndpoint.url, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } })
-    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } });
+    ? http.get(selectedEndpoint.url, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment', name: `${ENDPOINTS.PAYMENT.STATUS}/:id` } })
+    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment', name: ENDPOINTS.PAYMENT.AUTHORIZE } });
   
   const success = check(res, {
     'payment status is 200 or 201': (r) => r.status === 200 || r.status === 201,

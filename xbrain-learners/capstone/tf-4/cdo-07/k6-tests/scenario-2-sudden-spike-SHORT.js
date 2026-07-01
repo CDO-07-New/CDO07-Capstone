@@ -97,8 +97,8 @@ function testPaymentService(tenant) {
   const headers  = generateHeaders(tenant);
 
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url,  { headers, timeout: '10s', tags: { tenant, endpoint: 'payment' } })
-    : http.post(endpoint.url, endpoint.payload, { headers, timeout: '10s', tags: { tenant, endpoint: 'payment' } });
+    ? http.get(endpoint.url,  { headers, timeout: '10s', tags: { tenant, endpoint: 'payment', name: `${ENDPOINTS.PAYMENT.STATUS}/:id` } })
+    : http.post(endpoint.url, endpoint.payload, { headers, timeout: '10s', tags: { tenant, endpoint: 'payment', name: ENDPOINTS.PAYMENT.AUTHORIZE } });
 
   const ok = check(res, {
     'payment 200/201': (r) => r.status === 200 || r.status === 201,

@@ -130,9 +130,18 @@ export function testPaymentService(isSpike) {
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
   
+  let nameTag = ENDPOINTS.PAYMENT.AUTHORIZE;
+  if (endpoint.url.includes('/status/')) {
+    nameTag = `${ENDPOINTS.PAYMENT.STATUS}/:id`;
+  } else if (endpoint.url.includes('/capture')) {
+    nameTag = ENDPOINTS.PAYMENT.CAPTURE;
+  } else if (endpoint.url.includes('/refund')) {
+    nameTag = ENDPOINTS.PAYMENT.REFUND;
+  }
+  
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url,  { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } })
-    : http.post(endpoint.url, endpoint.payload, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } });
+    ? http.get(endpoint.url,  { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment', name: nameTag } })
+    : http.post(endpoint.url, endpoint.payload, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment', name: nameTag } });
   
   const success = check(res, {
     'payment status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -155,9 +164,18 @@ export function testLedgerService(isSpike) {
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
   
+  let nameTag = ENDPOINTS.LEDGER.ENTRY;
+  if (endpoint.url.includes('/balance/')) {
+    nameTag = `${ENDPOINTS.LEDGER.BALANCE}/:id`;
+  } else if (endpoint.url.includes('/history/')) {
+    nameTag = `${ENDPOINTS.LEDGER.HISTORY}/:id`;
+  } else if (endpoint.url.includes('/reconcile')) {
+    nameTag = ENDPOINTS.LEDGER.RECONCILE;
+  }
+  
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url,  { headers: generateHeaders('ledger-svc'), timeout: '10s', tags: { tenant: 'ledger-svc', endpoint: 'ledger' } })
-    : http.post(endpoint.url, endpoint.payload, { headers: generateHeaders('ledger-svc'), timeout: '10s', tags: { tenant: 'ledger-svc', endpoint: 'ledger' } });
+    ? http.get(endpoint.url,  { headers: generateHeaders('ledger-svc'), timeout: '10s', tags: { tenant: 'ledger-svc', endpoint: 'ledger', name: nameTag } })
+    : http.post(endpoint.url, endpoint.payload, { headers: generateHeaders('ledger-svc'), timeout: '10s', tags: { tenant: 'ledger-svc', endpoint: 'ledger', name: nameTag } });
   
   const success = check(res, {
     'ledger status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -192,9 +210,16 @@ export function testFraudService(isSpike) {
     }
   }
   
+  let nameTag = ENDPOINTS.FRAUD.CHECK;
+  if (selectedEndpoint.url.includes('/report/')) {
+    nameTag = `${ENDPOINTS.FRAUD.REPORT}/:id`;
+  } else if (selectedEndpoint.url.includes('/batch-check')) {
+    nameTag = ENDPOINTS.FRAUD.BATCH;
+  }
+  
   const res = selectedEndpoint.method === 'GET'
-    ? http.get(selectedEndpoint.url,  { headers: generateHeaders('fraud-detection'), timeout: '10s', tags: { tenant: 'fraud-detection', endpoint: 'fraud' } })
-    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: generateHeaders('fraud-detection'), timeout: '10s', tags: { tenant: 'fraud-detection', endpoint: 'fraud' } });
+    ? http.get(selectedEndpoint.url,  { headers: generateHeaders('fraud-detection'), timeout: '10s', tags: { tenant: 'fraud-detection', endpoint: 'fraud', name: nameTag } })
+    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: generateHeaders('fraud-detection'), timeout: '10s', tags: { tenant: 'fraud-detection', endpoint: 'fraud', name: nameTag } });
   
   const success = check(res, {
     'fraud status is 200': (r) => r.status === 200,

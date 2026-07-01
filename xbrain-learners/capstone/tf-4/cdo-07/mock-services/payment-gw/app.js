@@ -23,8 +23,22 @@ const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 // Initialize Kinesis client
 const kinesis = new AWS.Kinesis({ region: AWS_REGION });
 
+// Request rate counter for dynamic metric simulation
+let requestCounter = 0;
+let currentRps = 0;
+setInterval(() => {
+  currentRps = requestCounter;
+  requestCounter = 0;
+}, 1000);
+
 // Middleware
 app.use(express.json());
+app.use((req, res, next) => {
+  if (req.path !== '/health') {
+    requestCounter++;
+  }
+  next();
+});
 
 // Helper to extract tenant_id from request
 function getTenantId(req) {
@@ -138,10 +152,10 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
-      // Simulate CPU load based on request latency:
-      // latency <= 100ms -> cpu ~ 20-35%
-      // latency >= 500ms -> cpu ~ 80-100%
-      value: Math.min(100, Math.max(10, 15 + (latency / 8) + Math.random() * 10)),
+      // Simulate CPU load based on request throughput (RPS):
+      // baseline (80 RPS total) -> cpu ~ 25-45%
+      // spike (300+ RPS total) -> cpu ~ 80-100%
+      value: Math.min(100, Math.max(10, 15 + (currentRps * 0.3) + Math.random() * 10)),
       labels: { operation }
     },
     {
@@ -149,8 +163,8 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
-      // Memory slightly increases under latency/queuing pressure
-      value: Math.min(100, Math.max(15, 25 + (latency / 12) + Math.random() * 5)),
+      // Memory slightly increases under workload pressure
+      value: Math.min(100, Math.max(15, 25 + (currentRps * 0.15) + Math.random() * 5)),
       labels: { operation }
     },
     {
@@ -165,18 +179,18 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       ts: timestamp,
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
-      // Simulate payment processing queue depth (correlates with latency backpressure)
+      // Simulate payment processing queue depth proportional to RPS
       metric_type: 'queue_depth',
-      value: Math.max(0, Math.floor((latency / 100) * (1 + Math.random() * 0.3))),
+      value: Math.max(0, Math.floor((currentRps * 0.15) * (1 + Math.random() * 0.2))),
       labels: { operation, queue_name: 'payment-processing-queue' }
     },
     {
       ts: timestamp,
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
-      // Active connections simulated from OS/request tracking
+      // Active connections simulated from request rate
       metric_type: 'active_connections',
-      value: Math.max(1, Math.floor(cpuUsage * 0.5 + Math.random() * 20)),
+      value: Math.max(1, Math.floor(currentRps * 0.4 + Math.random() * 10)),
       labels: { operation }
     }
   ];
