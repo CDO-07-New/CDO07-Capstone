@@ -13,6 +13,9 @@ resource "aws_cloudwatch_metric_alarm" "iterator_age_high" {
   statistic           = "Maximum"
   threshold           = 60000 # 60 seconds (Lag qua 60s)
   alarm_description   = "Kinesis Iterator Age > 60s. Transformer dang bi cham hoac qua tai."
+  alarm_actions       = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  ok_actions          = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  treat_missing_data  = "notBreaching"
 
   dimensions = {
     StreamName = aws_kinesis_stream.telemetry.name
@@ -32,6 +35,9 @@ resource "aws_cloudwatch_metric_alarm" "incoming_records_spike" {
   statistic           = "Sum"
   threshold           = 3000000 # 50,000 / sec * 60 = 3,000,000 (Vuot limit thiet ke)
   alarm_description   = "Luu luong Kinesis vuot 50k events/sec. Kinesis On-Demand tu dong scale."
+  alarm_actions       = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  ok_actions          = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  treat_missing_data  = "notBreaching"
 
   dimensions = {
     StreamName = aws_kinesis_stream.telemetry.name

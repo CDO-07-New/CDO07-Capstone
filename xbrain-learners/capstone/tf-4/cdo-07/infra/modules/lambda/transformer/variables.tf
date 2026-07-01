@@ -92,3 +92,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "alert_sns_topic_arn" {
+  description = "ARN of the SNS topic (sns_to_slack) to notify when a Transformer CloudWatch Alarm fires. Leave empty to suppress alarm actions."
+  type        = string
+  default     = ""
+}
