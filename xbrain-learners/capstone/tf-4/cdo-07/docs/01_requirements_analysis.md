@@ -86,3 +86,12 @@ Thiết kế sử dụng **Timestream for InfluxDB** làm time-series store chí
 - [ ] Q3: Baseline refresh chạy theo lịch cố định hay theo drift threshold?
 - [ ] Q4: Capacity recommendation có cần approval workflow trước khi gửi SNS notification không?
 - [ ] Q5: Service onboarding cần tối thiểu bao nhiêu ngày historical metrics để baseline đạt chất lượng chấp nhận được?
+
+## Related documents
+
+- [`02_infra_design.md`](02_infra_design.md) - Runtime architecture and component ownership.
+- [`03_security_design.md`](03_security_design.md) - IAM, network, encryption and audit controls.
+- [`04_deployment_design.md`](04_deployment_design.md) - IaC Terraform + CI/CD GitOps for this infra.
+- [`05_cost_analysis.md`](05_cost_analysis.md) - Per-service cost model breakdown.
+- [`07_test_eval_report.md`](07_test_eval_report.md) - Test and evaluation report.
+- [`08_adrs.md`](08_adrs.md) - Architecture decision records (ADR-001 to ADR-005).
