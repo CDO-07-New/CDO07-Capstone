@@ -131,6 +131,11 @@ module "mock_services" {
   kinesis_stream_name   = module.streaming.stream_name
   kms_key_arn           = local.kms_key_arn
 
+  # ECR Image URIs - built by GitHub Actions workflow
+  ecr_image_uri_payment = "201023212626.dkr.ecr.us-east-1.amazonaws.com/payment-gw:latest"
+  ecr_image_uri_ledger  = "201023212626.dkr.ecr.us-east-1.amazonaws.com/ledger-svc:latest"
+  ecr_image_uri_fraud   = "201023212626.dkr.ecr.us-east-1.amazonaws.com/fraud-detection:latest"
+
   tags = local.common_tags
 }
 
@@ -151,6 +156,10 @@ module "ai_engine" {
   audit_s3_bucket        = module.audit_s3.audit_bucket_name
   audit_s3_bucket_arn    = module.audit_s3.audit_bucket_arn
   kms_key_arn            = local.kms_key_arn
+
+  # ECR Image URI - provided by AI team (placeholder for now)
+  # TODO: Update once AI team provides actual image
+  ecr_image_uri = "public.ecr.aws/nginx/nginx:alpine"
 
   tags = local.common_tags
 }
