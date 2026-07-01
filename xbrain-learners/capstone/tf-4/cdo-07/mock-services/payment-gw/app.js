@@ -26,6 +26,11 @@ const kinesis = new AWS.Kinesis({ region: AWS_REGION });
 // Middleware
 app.use(express.json());
 
+// Helper to extract tenant_id from request
+function getTenantId(req) {
+  return req.headers['x-tenant-id'] || req.body?.tenant_id || 'tier-1';
+}
+
 // Health check endpoint (required by ALB target group)
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'healthy', service: SERVICE_NAME });
@@ -40,9 +45,10 @@ app.post('/payment/authorize', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('authorize', latency);
+  await emitMetrics('authorize', latency, tenantId);
   
   res.status(200).json({
     transaction_id: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -60,9 +66,10 @@ app.post('/payment/capture', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('capture', latency);
+  await emitMetrics('capture', latency, tenantId);
   
   res.status(200).json({
     transaction_id: req.body.transaction_id || `txn_${Date.now()}`,
@@ -79,9 +86,10 @@ app.post('/payment/refund', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('refund', latency);
+  await emitMetrics('refund', latency, tenantId);
   
   res.status(200).json({
     refund_id: `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -98,9 +106,10 @@ app.get('/payment/status/:txnId', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('status_check', latency);
+  await emitMetrics('status_check', latency, tenantId);
   
   res.status(200).json({
     transaction_id: req.params.txnId,
@@ -113,7 +122,7 @@ app.get('/payment/status/:txnId', async (req, res) => {
  * Emit telemetry metrics to Kinesis
  * Format matches Telemetry Contract §Schema requirements
  */
-async function emitMetrics(operation, latency) {
+async function emitMetrics(operation, latency, tenantId = 'tier-1') {
   if (!KINESIS_STREAM_NAME) {
     console.log('[WARN] KINESIS_STREAM_NAME not set, skipping telemetry');
     return;
@@ -126,7 +135,7 @@ async function emitMetrics(operation, latency) {
   const metrics = [
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
       value: Math.min(100, cpuUsage + Math.random() * 10),
@@ -134,7 +143,7 @@ async function emitMetrics(operation, latency) {
     },
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
       value: Math.min(100, memUsage + Math.random() * 5),
@@ -142,10 +151,28 @@ async function emitMetrics(operation, latency) {
     },
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'api_latency_ms',
       value: latency,
+      labels: { operation }
+    },
+    {
+      ts: timestamp,
+      tenant_id: tenantId,
+      service_id: SERVICE_NAME,
+      // Simulate payment processing queue depth (correlates with latency backpressure)
+      metric_type: 'queue_depth',
+      value: Math.max(0, Math.floor((latency / 100) * (1 + Math.random() * 0.3))),
+      labels: { operation, queue_name: 'payment-processing-queue' }
+    },
+    {
+      ts: timestamp,
+      tenant_id: tenantId,
+      service_id: SERVICE_NAME,
+      // Active connections simulated from OS/request tracking
+      metric_type: 'active_connections',
+      value: Math.max(1, Math.floor(cpuUsage * 0.5 + Math.random() * 20)),
       labels: { operation }
     }
   ];
@@ -153,7 +180,7 @@ async function emitMetrics(operation, latency) {
   try {
     const records = metrics.map(metric => ({
       Data: JSON.stringify(metric),
-      PartitionKey: 'tier-1' // Use tenant_id for proper multi-tenant isolation
+      PartitionKey: tenantId // Use tenant_id for proper multi-tenant isolation
     }));
 
     await kinesis.putRecords({
@@ -161,7 +188,7 @@ async function emitMetrics(operation, latency) {
       StreamName: KINESIS_STREAM_NAME
     }).promise();
 
-    console.log(`[TELEMETRY] Sent ${records.length} metrics for ${operation}`);
+    console.log(`[TELEMETRY] Sent ${records.length} metrics for ${operation} (tenant: ${tenantId})`);
   } catch (error) {
     console.error('[ERROR] Failed to send telemetry:', error.message);
   }

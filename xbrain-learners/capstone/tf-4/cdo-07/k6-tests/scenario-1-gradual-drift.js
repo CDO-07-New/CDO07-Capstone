@@ -17,12 +17,12 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 import {
   BASE_URL,
   ENDPOINTS,
-  HEADERS,
+  generateHeaders,
   generatePaymentPayload,
   generateLedgerPayload,
   generateFraudPayload
@@ -35,21 +35,6 @@ const ledgerLatency = new Trend('ledger_latency');
 const fraudLatency = new Trend('fraud_latency');
 
 export const options = {
-  // Gradual ramp-up over 2 hours to simulate slow drift
-  stages: [
-    // Phase 1: Warm-up (10 min) - 50 RPS
-    { duration: '10m', target: 50 },
-    
-    // Phase 2: Baseline (30 min) - 100 RPS
-    { duration: '30m', target: 100 },
-    
-    // Phase 3: Gradual increase (60 min) - 100→150 RPS
-    { duration: '60m', target: 150 },
-    
-    // Phase 4: Sustained high load (20 min) - 150 RPS
-    { duration: '20m', target: 150 }
-  ],
-  
   thresholds: {
     'http_req_duration': ['p(95)<800'], // Allow higher latency for drift scenario
     'http_req_failed': ['rate<0.05'],   // 5% error tolerance as system degrades
@@ -106,17 +91,20 @@ export const options = {
 };
 
 export function testPaymentService() {
+  // payment-gw tenant (dedicated executor for this service)
+  const tenant = 'payment-gw';
   const endpoints = [
-    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`, payload: generatePaymentPayload() },
-    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.CAPTURE}`, payload: JSON.stringify({ transaction_id: `txn_${Date.now()}` }) },
+    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`, payload: generatePaymentPayload(tenant) },
+    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.CAPTURE}`, payload: JSON.stringify({ transaction_id: `txn_${Date.now()}`, tenant_id: tenant }) },
     { url: `${BASE_URL}${ENDPOINTS.PAYMENT.STATUS}/txn_${Date.now()}`, method: 'GET' }
   ];
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
+  const headers  = generateHeaders(tenant);
   
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url, { headers: HEADERS })
-    : http.post(endpoint.url, endpoint.payload, { headers: HEADERS });
+    ? http.get(endpoint.url, { headers, tags: { tenant, endpoint: 'payment' } })
+    : http.post(endpoint.url, endpoint.payload, { headers, tags: { tenant, endpoint: 'payment' } });
   
   const success = check(res, {
     'payment status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -126,21 +114,24 @@ export function testPaymentService() {
   paymentLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.1 + Math.random() * 0.3);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testLedgerService() {
+  // ledger-svc tenant (dedicated executor for this service)
+  const tenant = 'ledger-svc';
   const endpoints = [
-    { url: `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`, payload: generateLedgerPayload() },
+    { url: `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`, payload: generateLedgerPayload(tenant) },
     { url: `${BASE_URL}${ENDPOINTS.LEDGER.BALANCE}/acc_${Math.floor(Math.random() * 1000)}`, method: 'GET' },
     { url: `${BASE_URL}${ENDPOINTS.LEDGER.HISTORY}/acc_${Math.floor(Math.random() * 1000)}`, method: 'GET' }
   ];
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
+  const headers  = generateHeaders(tenant);
   
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url, { headers: HEADERS })
-    : http.post(endpoint.url, endpoint.payload, { headers: HEADERS });
+    ? http.get(endpoint.url, { headers, tags: { tenant, endpoint: 'ledger' } })
+    : http.post(endpoint.url, endpoint.payload, { headers, tags: { tenant, endpoint: 'ledger' } });
   
   const success = check(res, {
     'ledger status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -150,20 +141,23 @@ export function testLedgerService() {
   ledgerLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.2 + Math.random() * 0.4);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testFraudService() {
+  // fraud-detection tenant (dedicated executor for this service)
+  const tenant = 'fraud-detection';
   const endpoints = [
-    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload() },
+    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload(tenant) },
     { url: `${BASE_URL}${ENDPOINTS.FRAUD.REPORT}/txn_${Date.now()}`, method: 'GET' }
   ];
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
+  const headers  = generateHeaders(tenant);
   
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url, { headers: HEADERS })
-    : http.post(endpoint.url, endpoint.payload, { headers: HEADERS });
+    ? http.get(endpoint.url, { headers, tags: { tenant, endpoint: 'fraud' } })
+    : http.post(endpoint.url, endpoint.payload, { headers, tags: { tenant, endpoint: 'fraud' } });
   
   const success = check(res, {
     'fraud status is 200': (r) => r.status === 200,
@@ -173,7 +167,7 @@ export function testFraudService() {
   fraudLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.3 + Math.random() * 0.5);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function handleSummary(data) {

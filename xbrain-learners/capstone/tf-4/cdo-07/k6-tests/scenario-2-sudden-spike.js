@@ -18,12 +18,12 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 import {
   BASE_URL,
   ENDPOINTS,
-  HEADERS,
+  generateHeaders,
   generatePaymentPayload,
   generateLedgerPayload,
   generateFraudPayload
@@ -37,7 +37,14 @@ const ledgerLatency = new Trend('ledger_latency');
 const fraudLatency = new Trend('fraud_latency');
 
 export const options = {
-  stages: [
+  scenarios: {
+    sudden_spike: {
+      executor: 'ramping-arrival-rate',
+      startRate: 100,
+      timeUnit: '1s',
+      preAllocatedVUs: 300,
+      maxVUs: 1000,
+      stages: [
     // Phase 1: Normal baseline (30 min)
     { duration: '30m', target: 100 },
     
@@ -52,7 +59,9 @@ export const options = {
     
     // Phase 5: Back to baseline (58 min)
     { duration: '58m', target: 100 }
-  ],
+      ],
+    }
+  },
   
   thresholds: {
     'http_req_duration': ['p(95)<1000'], // Relaxed during spike
@@ -97,8 +106,8 @@ export function testPaymentService() {
   }
   
   const res = selectedEndpoint.method === 'GET'
-    ? http.get(selectedEndpoint.url, { headers: HEADERS, timeout: '10s' })
-    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: HEADERS, timeout: '10s' });
+    ? http.get(selectedEndpoint.url, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } })
+    : http.post(selectedEndpoint.url, selectedEndpoint.payload, { headers: generateHeaders('payment-gw'), timeout: '10s', tags: { tenant: 'payment-gw', endpoint: 'payment' } });
   
   const success = check(res, {
     'payment status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -109,14 +118,14 @@ export function testPaymentService() {
   errorRate.add(!success);
   spikeRequests.add(1);
   
-  sleep(0.05 + Math.random() * 0.1); // Shorter sleep during spike
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testLedgerService() {
   const res = http.post(
     `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`,
-    generateLedgerPayload(),
-    { headers: HEADERS, timeout: '10s' }
+    generateLedgerPayload('ledger-svc'),
+    { headers: generateHeaders('ledger-svc'), timeout: '10s', tags: { tenant: 'ledger-svc', endpoint: 'ledger' } }
   );
   
   const success = check(res, {
@@ -128,7 +137,7 @@ export function testLedgerService() {
   errorRate.add(!success);
   spikeRequests.add(1);
   
-  sleep(0.1 + Math.random() * 0.2);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testFraudService() {
@@ -140,7 +149,7 @@ export function testFraudService() {
   
   const endpoint = Math.random() < 0.8 ? endpoints[0] : endpoints[1];
   
-  const res = http.post(endpoint.url, endpoint.payload, { headers: HEADERS, timeout: '10s' });
+  const res = http.post(endpoint.url, endpoint.payload, { headers: generateHeaders('fraud-detection'), timeout: '10s', tags: { tenant: 'fraud-detection', endpoint: 'fraud' } });
   
   const success = check(res, {
     'fraud status is 200': (r) => r.status === 200,
@@ -151,7 +160,7 @@ export function testFraudService() {
   errorRate.add(!success);
   spikeRequests.add(1);
   
-  sleep(0.1 + Math.random() * 0.15);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function handleSummary(data) {

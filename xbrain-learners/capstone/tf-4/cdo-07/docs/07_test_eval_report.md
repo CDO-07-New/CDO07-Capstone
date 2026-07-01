@@ -38,9 +38,9 @@ Nếu có SLO không đạt, nguyên nhân gốc rễ và biện pháp khắc ph
 ### 3.1 Test setup
 
 * **Tool:** k6
-* **Load profile:** Ramp-up từ 0 → 100 RPS trong 5 phút, duy trì 100 RPS trong 10 phút
-* **Services simulated:** payment-gateway, kyc-service, reporting-api
-* **Workload:** Synthetic telemetry với gradual drift và sudden spike patterns, gửi qua ADOT collector sidecar tới AI Engine trên ECS Fargate
+* **Load profile:** Ramp-up từ 0 → 100 RPS trong 5 phút, duy trì 100 RPS trong 10 phút (SHORT). Full scenarios: ≥2h với 150 RPS peak.
+* **Services simulated:** payment-gw (payment-gateway), ledger-svc (ledger-service), fraud-detection
+* **Workload:** Synthetic telemetry với gradual drift, sudden spike, slow leak và noisy baseline patterns, gửi qua mock services → Kinesis Data Streams → Lambda Transformer → Timestream for InfluxDB → Window Feeder Lambda → AI Engine /v1/predict
 
 ### 3.2 Results
 
@@ -51,13 +51,14 @@ Nếu có SLO không đạt, nguyên nhân gốc rễ và biện pháp khắc ph
 | End-to-end P99 latency   | < 1500ms  | Xms      |
 | Error rate               | < 1%      | X%       |
 | Auto-scale triggered     | ≥ 3 tasks | ✓/✗      |
-| ADOT ingestion lag (AMP) | < 30s     | Xs       |
+| Kinesis ingestion lag    | < 60s     | Xs       |
+| InfluxDB write success   | ≥ 99.5%   | ✓/✗      |
 
 ### 3.3 Bottleneck identified
 
 * Compute bottleneck: ECS Fargate AI Engine task CPU/memory dưới sustained load — ...
-* ADOT sidecar bottleneck: collector export throughput tới AMP remote-write endpoint — ...
-* Database bottleneck: AMP ingestion rate / PromQL query latency dưới cardinality cao — ...
+* Kinesis bottleneck: Shard capacity hoặc Lambda Transformer throughput khi traffic spike đột ngột — ...
+* InfluxDB bottleneck: Timestream for InfluxDB write throughput hoặc Flux query latency dưới cardinality cao — ...
 * Networking bottleneck: ALB target group connection saturation hoặc VPC Endpoint throughput — ...
 
 > TODO W12: Ghi nhận thành phần giới hạn hiệu năng cao nhất.
@@ -140,9 +141,10 @@ Kết quả load test được đối chiếu với các giả định chi phí 
 | Assumption                              | Status |
 | ----------------------------------------- | ------ |
 | Monthly cost < $180 (budget alert threshold) | ✓/✗    |
-| ADOT sidecar overhead within estimate ($35.56) | ✓/✗  |
-| AMP samples ingested/queried within estimate ($0.93) | ✓/✗ |
+| Kinesis On-Demand cost within estimate (~$28.50) | ✓/✗  |
+| Timestream for InfluxDB within estimate ($116.40/tháng, $58.20/2-week) | ✓/✗ |
 | AWS Budget alert not triggered             | ✓/✗    |
+| Lambda Transformer invocations within estimate | ✓/✗ |
 
 > TODO W12: Điền số liệu thực tế từ Cost Explorer và AWS Budgets.
 

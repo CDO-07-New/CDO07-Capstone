@@ -48,30 +48,33 @@ export const ENDPOINTS = {
 };
 
 // Realistic payload generators
-export function generatePaymentPayload() {
+export function generatePaymentPayload(tenantId = 'tier-1') {
   return JSON.stringify({
     amount: Math.floor(Math.random() * 10000) / 100,
     currency: 'USD',
     customer_id: `cust_${Math.random().toString(36).substr(2, 9)}`,
-    payment_method: ['card', 'bank', 'wallet'][Math.floor(Math.random() * 3)]
+    payment_method: ['card', 'bank', 'wallet'][Math.floor(Math.random() * 3)],
+    tenant_id: tenantId
   });
 }
 
-export function generateLedgerPayload() {
+export function generateLedgerPayload(tenantId = 'tier-1') {
   return JSON.stringify({
     account_id: `acc_${Math.floor(Math.random() * 10000)}`,
     amount: Math.floor(Math.random() * 100000) / 100,
     type: Math.random() > 0.5 ? 'debit' : 'credit',
-    description: `Transaction ${Date.now()}`
+    description: `Transaction ${Date.now()}`,
+    tenant_id: tenantId
   });
 }
 
-export function generateFraudPayload() {
+export function generateFraudPayload(tenantId = 'tier-1') {
   return JSON.stringify({
     transaction_id: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     amount: Math.floor(Math.random() * 50000) / 100,
     location: ['US', 'UK', 'SG', 'JP'][Math.floor(Math.random() * 4)],
-    device_fingerprint: Math.random().toString(36).substr(2, 16)
+    device_fingerprint: Math.random().toString(36).substr(2, 16),
+    tenant_id: tenantId
   });
 }
 
@@ -92,6 +95,15 @@ export const HEADERS = {
   'Content-Type': 'application/json',
   'User-Agent': 'k6-foresight-lens-load-test/1.0'
 };
+
+// Generate headers with tenant ID for proper multi-tenant telemetry routing
+export function generateHeaders(tenantId = 'tier-1') {
+  return {
+    'Content-Type': 'application/json',
+    'User-Agent': 'k6-foresight-lens-load-test/1.0',
+    'X-Tenant-Id': tenantId
+  };
+}
 
 export default {
   BASE_URL,

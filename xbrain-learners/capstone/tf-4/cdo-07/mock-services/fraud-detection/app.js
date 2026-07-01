@@ -26,6 +26,11 @@ const kinesis = new AWS.Kinesis({ region: AWS_REGION });
 // Middleware
 app.use(express.json());
 
+// Helper to extract tenant_id from request
+function getTenantId(req) {
+  return req.headers['x-tenant-id'] || req.body?.tenant_id || 'tier-1';
+}
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'healthy', service: SERVICE_NAME });
@@ -43,9 +48,10 @@ app.post('/fraud/check', async (req, res) => {
   const latency = Date.now() - startTime;
   const riskScore = Math.random() * 100;
   const isFraudulent = riskScore > 75;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('fraud_check', latency, riskScore);
+  await emitMetrics('fraud_check', latency, riskScore, null, tenantId);
   
   res.status(200).json({
     transaction_id: req.body.transaction_id || `txn_${Date.now()}`,
@@ -67,9 +73,10 @@ app.post('/fraud/batch-check', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime * 0.2));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('batch_fraud_check', latency, null, batchSize);
+  await emitMetrics('batch_fraud_check', latency, null, batchSize, tenantId);
   
   const results = Array.from({ length: batchSize }, (_, i) => {
     const riskScore = Math.random() * 100;
@@ -96,9 +103,10 @@ app.get('/fraud/report/:txnId', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('fraud_report', latency);
+  await emitMetrics('fraud_report', latency, null, null, tenantId);
   
   res.status(200).json({
     transaction_id: req.params.txnId,
@@ -120,9 +128,10 @@ app.post('/fraud/feedback', async (req, res) => {
   await new Promise(resolve => setTimeout(resolve, processingTime));
   
   const latency = Date.now() - startTime;
+  const tenantId = getTenantId(req);
   
   // Emit telemetry
-  await emitMetrics('feedback_ingestion', latency);
+  await emitMetrics('feedback_ingestion', latency, null, null, tenantId);
   
   res.status(200).json({
     feedback_id: `fb_${Date.now()}`,
@@ -150,7 +159,7 @@ function burnCPU(durationMs) {
  * Emit telemetry metrics to Kinesis
  * Fraud detection typically has high CPU due to ML inference
  */
-async function emitMetrics(operation, latency, riskScore = null, batchSize = null) {
+async function emitMetrics(operation, latency, riskScore = null, batchSize = null, tenantId = 'tier-1') {
   if (!KINESIS_STREAM_NAME) {
     console.log('[WARN] KINESIS_STREAM_NAME not set, skipping telemetry');
     return;
@@ -166,7 +175,7 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
   const metrics = [
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
       value: Math.min(100, cpuUsage + fraudCPUAdjustment), // Higher CPU for ML
@@ -174,7 +183,7 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
     },
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
       value: Math.min(100, memUsage + Math.random() * 10),
@@ -182,19 +191,39 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
     },
     {
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'api_latency_ms',
       value: latency,
       labels: { operation, batch_size: batchSize }
+    },
+    {
+      ts: timestamp,
+      tenant_id: tenantId,
+      service_id: SERVICE_NAME,
+      // Redis cache hit rate for ML model lookups - drops under memory pressure
+      // Telemetry contract Signal 6: cache_hit_rate_pct
+      metric_type: 'cache_hit_rate_pct',
+      value: Math.max(0, Math.min(100, 85 - (cpuUsage * 0.3) - Math.random() * 10)),
+      labels: { operation, cache_type: 'redis' }
+    },
+    {
+      ts: timestamp,
+      tenant_id: tenantId,
+      service_id: SERVICE_NAME,
+      // Active connections to fraud inference workers
+      metric_type: 'active_connections',
+      value: Math.max(1, Math.floor(cpuUsage * 0.4 + (batchSize || 0) * 0.5 + Math.random() * 15)),
+      labels: { operation }
     }
   ];
 
-  // Add custom fraud metric if available
+  // Add risk_score as custom fraud metric (NOTE: not in telemetry contract - infra metric only)
+  // Kept for service-specific observability but AI engine ignores unknown metric_types gracefully
   if (riskScore !== null) {
     metrics.push({
       ts: timestamp,
-      tenant_id: 'tier-1',
+      tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'risk_score',
       value: riskScore,
@@ -205,7 +234,7 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
   try {
     const records = metrics.map(metric => ({
       Data: JSON.stringify(metric),
-      PartitionKey: 'tier-1' // Use tenant_id for proper multi-tenant isolation
+      PartitionKey: tenantId // Use tenant_id for proper multi-tenant isolation
     }));
 
     await kinesis.putRecords({
@@ -213,7 +242,7 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
       StreamName: KINESIS_STREAM_NAME
     }).promise();
 
-    console.log(`[TELEMETRY] Sent ${records.length} metrics for ${operation}`);
+    console.log(`[TELEMETRY] Sent ${records.length} metrics for ${operation} (tenant: ${tenantId})`);
   } catch (error) {
     console.error('[ERROR] Failed to send telemetry:', error.message);
   }

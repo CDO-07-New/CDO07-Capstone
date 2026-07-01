@@ -17,12 +17,12 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate, Trend, Gauge } from 'k6/metrics';
 import {
   BASE_URL,
   ENDPOINTS,
-  HEADERS,
+  generateHeaders,
   generatePaymentPayload,
   generateLedgerPayload,
   generateFraudPayload
@@ -37,15 +37,16 @@ const ledgerLatency = new Trend('ledger_latency');
 const fraudLatency = new Trend('fraud_latency');
 
 export const options = {
-  stages: [
-    // Constant 100 RPS for 2.5 hours
-    // But payload complexity increases over time
-    { duration: '30m', target: 100 },
-    { duration: '30m', target: 100 },
-    { duration: '30m', target: 100 },
-    { duration: '30m', target: 100 },
-    { duration: '30m', target: 100 }
-  ],
+  scenarios: {
+    slow_leak: {
+      executor: 'constant-arrival-rate',
+      rate: 100,
+      timeUnit: '1s',
+      duration: '150m',
+      preAllocatedVUs: 200,
+      maxVUs: 800,
+    }
+  },
   
   thresholds: {
     'http_req_duration': ['p(95)<2000'], // Allow degradation over time
@@ -57,11 +58,11 @@ export const options = {
 // Track test progress to simulate growing memory leak
 let iterationCount = 0;
 
-export default function() {
+export default function(data) {
   iterationCount++;
   
   // Simulate memory leak: payload size grows over time
-  const testProgress = (Date.now() - __ENV.START_TIME) / (2.5 * 60 * 60 * 1000); // 0.0 to 1.0
+  const testProgress = (Date.now() - data.START_TIME) / (2.5 * 60 * 60 * 1000); // 0.0 to 1.0
   const leakFactor = 1 + (testProgress * 3); // 1x to 4x memory pressure
   
   memoryPressure.add(leakFactor);
@@ -79,23 +80,18 @@ export default function() {
 }
 
 export function testPaymentService(leakFactor) {
-  // Generate payload with increasing size (simulate cached data accumulation)
-  const basePayload = JSON.parse(generatePaymentPayload());
-  
-  // Add artificial padding to simulate memory bloat
+  const basePayload = JSON.parse(generatePaymentPayload('payment-gw'));
   basePayload.metadata = {
     iteration: iterationCount,
-    cached_data: 'x'.repeat(Math.floor(100 * leakFactor)), // Growing metadata
+    cached_data: 'x'.repeat(Math.floor(100 * leakFactor)),
     timestamp: Date.now()
   };
-  
   const payload = JSON.stringify(basePayload);
   payloadSize.add(payload.length);
-  
   const res = http.post(
     `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`,
     payload,
-    { headers: HEADERS, timeout: '15s' }
+    { headers: generateHeaders('payment-gw'), timeout: '15s', tags: { tenant: 'payment-gw', endpoint: 'payment' } }
   );
   
   const success = check(res, {
@@ -106,8 +102,7 @@ export function testPaymentService(leakFactor) {
   paymentLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  // Slight delay increases as "memory pressure" builds
-  sleep(0.1 + (0.1 * leakFactor) + Math.random() * 0.2);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testLedgerService(leakFactor) {
@@ -129,7 +124,7 @@ export function testLedgerService(leakFactor) {
   const res = http.post(
     `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`,
     payload,
-    { headers: HEADERS, timeout: '15s' }
+    { headers: generateHeaders('ledger-svc'), timeout: '15s', tags: { tenant: 'ledger-svc', endpoint: 'ledger' } }
   );
   
   const success = check(res, {
@@ -140,7 +135,7 @@ export function testLedgerService(leakFactor) {
   ledgerLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.15 + (0.15 * leakFactor) + Math.random() * 0.25);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testFraudService(leakFactor) {
@@ -158,7 +153,7 @@ export function testFraudService(leakFactor) {
   const res = http.post(
     `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`,
     payload,
-    { headers: HEADERS, timeout: '15s' }
+    { headers: generateHeaders('fraud-detection'), timeout: '15s', tags: { tenant: 'fraud-detection', endpoint: 'fraud' } }
   );
   
   const success = check(res, {
@@ -169,7 +164,7 @@ export function testFraudService(leakFactor) {
   fraudLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.2 + (0.2 * leakFactor) + Math.random() * 0.3);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function setup() {
