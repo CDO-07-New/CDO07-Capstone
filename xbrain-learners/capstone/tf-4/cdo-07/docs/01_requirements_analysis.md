@@ -2,86 +2,87 @@
 
 ## 1. Đề tài context
 
-Hệ thống giám sát và dự báo chủ động **Foresight Lens** được thiết kế để giải quyết bài toán vận hành thực tế cho một khách hàng Fintech quy mô tầm trung. Hiện tại, doanh nghiệp đang phục vụ khoảng 3.5 triệu người dùng hoạt động (active users), với mức tải ngày thường đạt 2.8k Requests Per Second (RPS) và đạt đỉnh (peak traffic) lên tới 9k RPS trong các sự kiện lớn như Black Friday. Toàn bộ hệ thống core-banking và tài chính phụ trợ đang vận hành thông qua cụm hạ tầng gồm hơn 120 microservices production triển khai trên nền tảng AWS ECS Fargate, kết hợp với các CSDL RDS Aurora MySQL, DynamoDB và hệ thống hàng đợi SQS.
+**Foresight Lens** là hệ thống giám sát và dự báo chủ động cho một khách hàng Fintech quy mô tầm trung. Khách hàng vận hành hơn 120 microservices trên AWS ECS Fargate, kết hợp RDS Aurora MySQL, DynamoDB, SQS và Application Load Balancer. Tải ngày thường khoảng 2.8k RPS và có thể tăng lên 9k RPS trong các sự kiện lớn như Black Friday.
 
-### Vấn đề cốt lõi của khách hàng
-Trong vòng 3 tháng vừa qua, đội ngũ SRE (Site Reliability Engineering) của doanh nghiệp đã làm giảm uy tín thương hiệu khi vi phạm chỉ số SLO cam kết về độ sẵn sàng của hệ thống (Monthly Availability Target 99.9%) trong 7 lần liên tiếp. Đáng chú ý, nguyên nhân không xuất phát từ các sự cố sập nguồn thảm họa (catastrophic incidents), mà lại đến từ các lỗi cạn kiệt tài nguyên âm thầm (capacity exhaustion silent) diễn ra từ từ theo thời gian:
-* CPU của các cụm cơ sở dữ liệu RDS Aurora MySQL tăng dần đều và neo giữ ở mức 100% suốt 90 phút trước khi làm nghẽn hoàn toàn kết nối (connection pool exhaustion).
-* Lượng tin nhắn tồn đọng (backlog) trong hệ thống hàng đợi SQS tích tụ âm thầm lên gấp 6 lần khiến các ứng dụng tiêu thụ dữ liệu (consumers) rơi vào trạng thái timeout.
-* Giới hạn kết nối (connection limit) trên Application Load Balancer (ALB) chạm ngưỡng trần mỗi khi có traffic spike vào cuối tuần.
+### Vấn đề cốt lõi
 
-Tất cả các sự cố trên đều bị phát hiện muộn sau khi có từ 18 đến 25 khiếu nại (support tickets) từ phía người dùng cuối phản hồi về bộ phận CS, thay vì được phát hiện chủ động từ hệ thống giám sát nội bộ. Khách hàng đã có sẵn các dashboard CloudWatch và DataDog, nhưng họ thiếu một giải pháp tự động hóa có khả năng học baseline động thay vì dựa vào các ngưỡng cấu hình tĩnh (static thresholds) dễ gây nhiễu alert (alert fatigue) hoặc bỏ sót các biến động chậm (slow drift).
+Trong 3 tháng gần đây, đội SRE vi phạm SLO availability 99.9% nhiều lần do các sự cố capacity exhaustion diễn ra âm thầm: CPU database tăng dần đến 100%, SQS backlog tích tụ, ALB connection chạm ngưỡng trong traffic spike. Các sự cố thường chỉ được phát hiện sau khi người dùng gửi ticket, không phải từ cảnh báo chủ động.
+
+Khách hàng đã có CloudWatch và DataDog dashboard, nhưng thiếu một hệ thống học baseline động để phát hiện slow drift sớm hơn static thresholds. Mục tiêu là giảm alert fatigue, phát hiện rủi ro trước khi tài nguyên cạn kiệt, và tạo khuyến nghị đủ rõ để SRE phê duyệt bằng tay.
 
 ### Mục tiêu của Foresight Lens
-Xây dựng một hệ thống phân tích và dự báo chuỗi thời gian (time-series metrics) hoạt động liên tục 24/7 để:
-1. Tự động thu thập và phân tích các chỉ số tài nguyên từ 3 dịch vụ Tier-1 cốt lõi.
-2. Học tập hành vi bình thường (per-service baseline) theo chu kỳ tuần để nhận diện tính chất mùa vụ của ngành tài chính.
-3. Chủ động phát tín hiệu cảnh báo (proactive ping) trước ít nhất 15 phút khi hệ thống có dấu hiệu drift hoặc sắp cạn kiệt tài nguyên (capacity exhaustion).
-4. Đưa ra các khuyến nghị hành động cụ thể (Actionable Capacity Recommendation) có cấu trúc tường minh để kỹ sư SRE phê duyệt bằng tay (manual approval gate).
+
+1. Thu thập và phân tích metric hạ tầng từ tối thiểu 3 dịch vụ Tier-1.
+2. Học baseline theo service/tenant để nhận diện xu hướng vận hành bình thường.
+3. Phát cảnh báo chủ động trước ít nhất 15 phút khi có drift hoặc capacity exhaustion risk.
+4. Trả về Actionable Capacity Recommendation cho SRE/manual approval gate.
+5. Mỗi Capacity Recommendation phải có đủ 5 thành phần: **[Action verb] + [Target] + [From → To] + [Confidence Score] + [Evidence Link]**.
+
+Ví dụ recommendation hợp lệ: `Scale ECS service payment-gw from 2 tasks → 4 tasks; confidence=0.87; evidence=s3://.../audit.json hoặc Grafana dashboard URL`.
 
 ---
 
 ## 2. Infra non-functional requirements
 
-Để hệ thống Foresight Lens hoạt động ổn định và đáp ứng các tiêu chuẩn khắt khe của một hệ thống tài chính, hạ tầng do nhóm CDO triển khai phải cam kết đạt được các chỉ số phi chức năng sau đây:
-
-| Chỉ số NFR | Ngưỡng Mục tiêu (Target) | Khung Lý do & Ràng buộc Kỹ thuật (Justification) |
+| Chỉ số NFR | Target | Justification |
 | :--- | :--- | :--- |
-| **Multi-tenant scale** | ≥ 3 tenant được thiết kế để đóng gói thành sản phẩm thương mại hóa (SaaS), cho phép quản lý và cô lập dữ liệu metric từ tối thiểu 3 tenant khác nhau. |
-| **SLO p99 latency** | < 1000ms | Áp dụng nghiêm ngặt cho điểm cuối API `/v1/predict`. Thời gian xử lý từ lúc nhận payload time-series window đến khi trả về kết quả dự báo không được quá 1 giây để bảo toàn thời gian xử lý sự cố. |
-| **Availability** | ≥ 99.5% | Cam kết độ sẵn sàng ổn định cho toàn bộ pipeline ingestion và hệ thống lưu trữ dữ liệu giám sát cốt lõi, đảm bảo không làm đứt gãy luồng metric truyền về. |
-| **Error rate** | < 0.5% | Tỷ lệ lỗi sinh ra trên đường truyền dẫn dữ liệu (drop metric, network error) phải được kiểm soát dưới 0.5% để tránh làm sai lệch tập dữ liệu đầu vào của mô hình AI. |
-| **Cost per tenant/month** | ~$59.97/ tenant | Dựa trên mục tiêu phân bổ ngân sách tối ưu của dự án, 179 đô cho 3 tenant |
-| **Onboarding SLA** | < 30 phút | Thời gian từ lúc một microservice mới được đăng ký vào hệ thống Foresight Lens cho đến khi hạ tầng lưu trữ và phân tách dữ liệu sẵn sàng tiếp nhận metric. |
-| **Security baseline** | IAM least-privilege + audit 90 ngày | Toàn bộ các dịch vụ AWS cấu hình chặt chẽ qua IAM Roles, mã hóa dữ liệu tại chỗ (Encryption at rest).|
+| **Multi-tenant scale** | ≥ 3 tenant | Hệ thống phải phân tách metric theo tenant để có thể đóng gói theo mô hình SaaS. |
+| **SLO p99 latency** | < 1000ms | Áp dụng cho API `/v1/predict`, tính từ lúc nhận time-series payload đến khi trả kết quả dự báo. |
+| **Availability** | ≥ 99.5% | Pipeline ingestion, storage và inference path phải đủ ổn định để không làm đứt luồng giám sát chính. |
+| **Error rate** | < 0.5% | Drop metric, lỗi network hoặc lỗi xử lý phải thấp để tránh làm sai dữ liệu đầu vào của AI Engine. |
+| **Cost per tenant/month** | ~$59.97/tenant | Tổng ngân sách mục tiêu khoảng $179 cho 3 tenant, nằm dưới budget cap $200/tháng. |
+| **Onboarding SLA** | < 30 phút | Một service mới phải sẵn sàng gửi metric và được phân tách dữ liệu trong vòng 30 phút. |
+| **Security baseline** | IAM least-privilege + encryption at rest + audit lifecycle | AWS services dùng IAM Roles tối thiểu quyền; dữ liệu được mã hóa bằng KMS/SSE; CloudWatch Logs có retention theo workload; S3 audit log có lifecycle Standard → IA sau 30 ngày, Deep Archive sau 90 ngày, expire sau 365 ngày. Mỗi lượt prediction/fallback phải sinh audit log encrypted at rest và có tối thiểu 6 fields: `timestamp`, `tenant_id`, `principal_id` hoặc caller identity, `correlation_id`/`request_id`, input reference hoặc payload hash, prediction/fallback result, recommendation/evidence reference. |
+| **Fail-open fallback** | Static threshold fallback | Nếu `/v1/predict` timeout/down hoặc Window Feeder thất bại, hệ thống phải kích hoạt static-threshold fallback để vẫn publish alert và ghi audit log. Fallback không thay thế ML prediction, chỉ bảo đảm giám sát không im lặng hoàn toàn. |
 
 ---
 
 ## 3. Differentiation Angle (KEY)
 
-Sau khi nghiên cứu sâu sắc về bản chất bài toán và các rủi ro kỹ thuật liên quan đến độ trễ dữ liệu và chi phí, nhóm quyết định lựa chọn hướng kiến trúc làm điểm nhấn cạnh tranh độc quyền:
+* **Angle lựa chọn:** **TSDB-Centric Hybrid Streaming (Kinesis Data Streams + Timestream for InfluxDB)**.
 
-* **Angle lựa chọn:** **TSDB-Centric Hybrid Streaming (Kinesis Data Stream + Amazon Timestream)**.
-* **Why this angle (Trục chiến thắng - Win Axis):** Khách hàng yêu cầu một hệ thống có khả năng đưa ra dự báo với **Lead time ≥ 15 phút** trước khi xảy ra vi phạm SLO. Để làm được điều này, dữ liệu đầu vào của AI Engine phải là dữ liệu "tươi nhất" (Real-time granularity) và giữ nguyên độ phân giải mịn trong suốt **90 ngày lưu trữ lịch sử**. 
-  
-  Nếu chọn hướng thiết kế Lakehouse (Option B), hệ thống sẽ bị dính độ trễ lớn do cơ chế gom lô (batching) của Kinesis Firehose và tiến trình lên lịch (schedule) của AWS Glue Job, dẫn đến nguy cơ cao bị trễ cửa sổ vàng 15 phút để cứu hệ thống. Nếu chọn hướng Managed-lite (Option C) sử dụng CloudWatch Custom Metrics, hệ thống sẽ rơi vào rủi ro tự động nén dữ liệu (down-sampling) sau 15 ngày, làm mất đi các chi tiết dịch chuyển chậm (slow drift) mà AI cần học. 
-  
-  Do đó, việc đưa **Amazon Timestream** làm hạt nhân lưu trữ kết hợp tầng đệm **Kinesis Data Stream** là lựa chọn tối ưu nhất. Kiến trúc này giúp ghi nhận dữ liệu thông suốt ở quy mô peak 50k events/sec, thực hiện truy vấn chuỗi thời gian (time-series query) tốc độ cao với độ trễ mili-giây, cung cấp dữ liệu thô toàn vẹn cho mô hình AI đưa ra kết quả dự báo chính xác nhất (đáp ứng tiêu chí bắt bắt được ≥ 80% drift của khách hàng).
+Hướng kiến trúc này được chọn vì yêu cầu lead time ≥ 15 phút cần dữ liệu mới, có độ trễ thấp và có thể query theo cửa sổ thời gian ngắn cho AI Engine. Lakehouse trên S3/Glue/Athena phù hợp phân tích lịch sử nhưng có độ trễ batching/partitioning cao hơn. CloudWatch Custom Metrics đơn thuần có rủi ro chi phí/cardinality và không phải lõi dữ liệu tối ưu cho AI.
 
-* **Phân tích Chi phí & Biến động giữa các Option Architectural:**
-  Để làm rõ tính khả thi của Option A dưới áp lực tải lớn trong ngân sách giới hạn **$200/tháng (Circuit Breaker Cap)**, nhóm thực hiện lập bảng đối chiếu cấu trúc chi phí (Cost Profile) chi tiết từ tầng nạp dữ liệu (Ingestion) đến tầng lưu trữ/truy vấn của AI:
+Thiết kế mục tiêu sử dụng Kinesis Data Streams làm ingestion buffer cho telemetry hạ tầng. Lambda Transformer đọc bản ghi từ Kinesis, kiểm tra schema, loại bỏ payload có PII và ghi telemetry sang **Timestream for InfluxDB** bằng InfluxDB Line Protocol. Window Feeder Lambda truy vấn dữ liệu bằng Flux theo cửa sổ thời gian cấu hình, bổ sung lookback để xử lý điểm thiếu, chuẩn hóa time grid, forward-fill khi phù hợp và gửi payload sang AI Engine `/v1/predict`.
 
-| Tiêu chí | Option A: TSDB-Centric (Lựa chọn của nhóm) | Option B: Lakehouse (S3 + Glue + Athena) | Option C: Managed Observability (CloudWatch Metrics) |
+### Cost profile
+
+| Tiêu chí | Option A: TSDB-Centric | Option B: Lakehouse | Option C: Managed Observability |
 | :--- | :--- | :--- | :--- |
-| **Cơ chế tính phí chính** | • **Kinesis Data Streams**: Phí duy trì Shard-hour + biến phí **PUT Payload Units** (tính theo block 25 KB/request khi đẩy metrics).<br>• **Amazon Timestream**: Phí nạp, phí lưu trữ và biến phí **Query Scan** ($0.01/GB dữ liệu bị quét khi AI gọi lệnh `SELECT`). | • Phí nạp dữ liệu qua Kinesis Firehose.<br>• Phí lưu trữ S3.<br>• Phí quét dữ liệu của Amazon Athena ($5/TB). | Phí nạp Custom Metrics theo số lượng Metric Volume ($0.30/metric/tháng cho 10k metrics đầu). |
-| **Chi phí cố định (Fixed Cost)** | **Trung bình (~$30 - $45)**: Chi phí cơ sở để duy trì số lượng Kinesis Shard tối thiểu ở chế độ Provisioned ngày thường (chưa tính biến phí lượng data chạy thực tế). | **Trung bình - Cao**: Chi phí chạy Glue Job định kỳ để nén/partition dữ liệu (tối thiểu ~0.44$/DPU-Hour). | **Rất cao (Vượt Budget)**: Với 120 services × trung bình 5 metrics/service = 600 metrics × 50k events/sec sẽ làm bùng nổ (explode) chi phí Custom Metrics vượt xa mức $200. |
-| **Rủi ro chi phí biến đổi (Variable Risk)** | **Cao**: <br>1. *Tầng Ingestion*: Lượng PUT Payload Units bùng nổ theo RPS hoặc khi record size vượt ngưỡng 25 KB làm nhân đôi chi phí.<br>2. *Tầng Query*: AI Engine gọi dữ liệu liên tục theo chu kỳ tính toán, gây nguy cơ lặp lại dữ liệu quét cũ (Data Overlap) đẩy chi phí Query Scan tăng phi mã. | **Thấp - Trung bình**: Nếu dữ liệu trên S3 được partition tốt bằng Glue, chi phí quét của Athena rất rẻ. Phí Firehose nạp vào thấp. | **Thấp**: Chi phí cố định theo số lượng metric được cấu hình trước từ đầu. |
-| **Giải pháp kiểm soát (Mitigation)** | **Kiểm soát Payload & Chiến lược Quét Giới hạn**: <br>1. *Cho Kinesis*: Kiểm soát kích thước bản ghi metric luôn $\le$ 25 KB để 1 request khớp đúng 1 Payload Unit. Áp dụng API `UpdateShardCount` hoặc thiết lập Auto-scaling Shard để chủ động scale up ngắn hạn cho tầng nạp khi có load test/event lớn thay vì duy trì dư thừa 24/7.<br>2. *Cho Timestream*: Ép AI Engine áp dụng **Chiến lược Quét Giới hạn (Bounded Scan)**, gắn filter chặt chẽ (`WHERE time > ago(2h)`) và chỉ `SELECT` các cột cụ thể để hạn chế tối đa số GB bị quét trùng lặp, tận dụng vùng Memory Store giá rẻ của Timestream. | Không áp dụng vì đã bị loại do **Độ trễ (Batching Latency)** từ cơ chế gom lô (batching) của Kinesis Firehose và tiến trình lên lịch (schedule) của AWS Glue Job $\rightarrow$ không đáp ứng được Lead time ≥ 15 phút. | Không áp dụng vì bị loại do **Data Down-sampling** (tự động nén dữ liệu, mất độ phân giải mịn sau 15 ngày $\rightarrow$ AI không học được các chi tiết dịch chuyển chậm - slow drift). |
+| **Cơ chế phí chính** | Kinesis on-demand, Lambda processing, Timestream for InfluxDB instance/storage, Window Feeder Flux query. | Firehose/S3/Glue/Athena scan. | CloudWatch custom metrics theo số lượng metric/time-series. |
+| **Fixed cost** | InfluxDB instance/storage, ECS/Fargate, ALB, Lambda, CloudWatch Logs. | Glue Job định kỳ và storage/query layer. | Tăng nhanh theo metric cardinality. |
+| **Variable risk** | Telemetry throughput, Lambda invocations, query window/lookback quá rộng. | Athena scan phụ thuộc partition. | Chi phí tăng theo số service, tenant và dimension. |
+| **Mitigation** | Kinesis on-demand, batch write InfluxDB, Flux query chỉ lấy cột cần thiết, giới hạn query window/lookback, budget circuit breaker $200/tháng cho inference workload. | Không dùng cho luồng dự báo chính vì latency. | Không dùng làm lõi AI vì cost/cardinality. |
 
-* **Trade-off chấp nhận:** Để đổi lấy độ phân giải dữ liệu hoàn hảo (Real-time granularity) lưu trữ trọn vẹn trong 90 ngày và tốc độ truy vấn tức thời phục vụ AI Engine, nhóm chấp nhận độ phức tạp cao hơn trong việc quản lý, tối ưu hóa đồng thời **Chi phí đẩy dữ liệu (PUT Payload Units) trên Kinesis Data Streams** và **Chi phí Quét Truy vấn (Query Scan Cost) trên Amazon Timestream** sinh ra từ hành động gọi dữ liệu định kỳ độc lập của mô hình. 
+### Trade-off chấp nhận
 
-  Nhóm sẽ thực hiện cấu hình **Magnetic Store Writes** nhằm tối ưu hóa chi phí ghi trực tiếp vào Timestream, đồng thời thiết lập chính sách giới hạn quét nghiêm ngặt trên câu lệnh SQL của mô hình dự báo. Điều này đảm bảo hệ thống vừa giữ vững mục tiêu kỹ thuật nghiêm ngặt (FP ≤ 12%, Catch ≥ 80% drift), vừa kiểm soát tổng chi phí vận hành thực tế không vượt quá mức giới hạn circuit breaker $200/tháng đề ra.
+Nhóm chấp nhận tăng độ phức tạp vận hành ở ingestion, Lambda processing và Timestream for InfluxDB để đổi lấy khả năng thu thập metric gần thời gian thực và phục vụ AI Engine theo chu kỳ ngắn.
+
+Thiết kế sử dụng **Timestream for InfluxDB** làm time-series store chính, vì vậy các giả định chi phí và vận hành tập trung vào InfluxDB instance/storage, write throughput và Flux query workload. Chi phí được kiểm soát bằng Kinesis on-demand, batch write sang InfluxDB, giới hạn query window/lookback và budget circuit breaker $200/tháng. Các mục tiêu model như **FP ≤ 12%** và **Catch ≥ 80% drift** là tiêu chí đánh giá ở tầng AI/model, không phải cấu hình hạ tầng hoặc tầng lưu trữ có thể áp đặt trực tiếp.
+
 ---
 
 ## 4. Constraints
 
-- **AWS only** – Không triển khai multi-cloud, chỉ sử dụng các dịch vụ AWS.
-- **Region** – ap-southeast-1 (Singapore) cho toàn bộ môi trường triển khai.
+- **AWS only** – Không triển khai multi-cloud.
+- **Region** – `us-east-1` cho các môi trường `sandbox`, `staging`, `prod`.
 - **Budget cap** – ≤ $200/tháng cho solution capstone.
-- **Single-region deployment** – Không triển khai multi-region, Disaster Recovery chỉ ở mức thiết kế.
-- **Auto-remediation** – Không nằm trong phạm vi dự án; hệ thống chỉ thực hiện prediction và recommendation.
-- **Auto-retraining pipeline** – Không xây dựng trong capstone; chỉ mô tả trigger logic thông qua ADR.
-- **Infrastructure metrics only** – Chỉ xử lý metrics hạ tầng (CPU, Memory, Queue Depth, Connections, Latency), không xử lý business metrics hoặc dữ liệu PII.
-- **Synthetic workload only** – Không sử dụng production traffic; kiểm thử bằng k6/Locust và dữ liệu mô phỏng.
-- **LLM-based prediction** – Không sử dụng do chi phí cao; tập trung vào statistical/ML-based forecasting.
-- **Code freeze**: Đóng băng code vào 08:00 AM ngày 02/07/2026. Mọi thay đổi sau thời điểm này đều bị từ chối.
+- **Single-region deployment** – Không triển khai multi-region; DR chỉ ở mức thiết kế.
+- **Auto-remediation** – Không nằm trong phạm vi dự án; hệ thống chỉ prediction, recommendation và alert.
+- **Recommendation contract** – Mọi Capacity Recommendation phải có đủ 5 thành phần `[Action verb] + [Target] + [From → To] + [Confidence Score] + [Evidence Link]` trước khi gửi cho SRE/manual approval gate.
+- **Fail-open behavior** – Khi AI Engine `/v1/predict` hoặc Window Feeder gặp sự cố, hệ thống phải kích hoạt static-threshold fallback để tiếp tục cảnh báo và audit.
+- **Auto-retraining pipeline** – Không xây dựng trong capstone; chỉ mô tả trigger logic qua ADR.
+- **Infrastructure metrics only** – Chỉ xử lý CPU, Memory, Queue Depth, Connections, Latency; không xử lý business metrics hoặc PII.
+- **Synthetic workload only** – Không dùng production traffic; kiểm thử bằng k6/Locust và dữ liệu mô phỏng.
+- **LLM-based prediction** – Không dùng do chi phí cao; tập trung statistical/ML-based forecasting.
+- **Code freeze** – Đóng băng code vào 08:00 AM ngày 02/07/2026.
 
 ---
 
 ## 5. Open questions
 
-- [ ] Q1: Tier-1 services nào sẽ được lựa chọn làm baseline services trong giai đoạn capstone?
-- [ ] Q2: Lead time mục tiêu 15 phút có áp dụng đồng đều cho tất cả service hay có ngoại lệ cho RDS-intensive workloads?
-- [ ] Q3: Baseline refresh nên thực hiện theo lịch cố định hàng tuần hay dựa trên drift threshold?
-- [ ] Q4: Capacity recommendation có yêu cầu approval workflow trước khi gửi SNS notification hay không?
+- [ ] Q1: Tier-1 services nào sẽ được chọn làm baseline services trong capstone?
+- [ ] Q2: Lead time 15 phút có áp dụng đồng đều cho tất cả service không?
+- [ ] Q3: Baseline refresh chạy theo lịch cố định hay theo drift threshold?
+- [ ] Q4: Capacity recommendation có cần approval workflow trước khi gửi SNS notification không?
 - [ ] Q5: Service onboarding cần tối thiểu bao nhiêu ngày historical metrics để baseline đạt chất lượng chấp nhận được?
