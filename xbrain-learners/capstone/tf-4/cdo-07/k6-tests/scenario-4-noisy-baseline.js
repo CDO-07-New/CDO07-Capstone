@@ -18,7 +18,7 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 import {
   BASE_URL,
@@ -37,26 +37,34 @@ const paymentLatency = new Trend('payment_latency');
 const ledgerLatency = new Trend('ledger_latency');
 const fraudLatency = new Trend('fraud_latency');
 
+const TRAFFIC_STAGES = [
+  { duration: '5m', minutes: 5, target: 100 },
+  { duration: '10m', minutes: 10, target: 85 },
+  { duration: '10m', minutes: 10, target: 250 },
+  { duration: '10m', minutes: 10, target: 90 },
+  { duration: '10m', minutes: 10, target: 110 },
+  { duration: '10m', minutes: 10, target: 280 },
+  { duration: '10m', minutes: 10, target: 95 },
+  { duration: '10m', minutes: 10, target: 115 },
+  { duration: '10m', minutes: 10, target: 220 },
+  { duration: '10m', minutes: 10, target: 80 },
+  { duration: '10m', minutes: 10, target: 320 },
+  { duration: '10m', minutes: 10, target: 105 },
+  { duration: '10m', minutes: 10, target: 90 },
+];
+
 export const options = {
   // Highly variable stages to create noisy baseline
-  stages: [
-    // Initial baseline
-    { duration: '5m', target: 100 },
-    
-    // Random walk pattern (12 stages of 10 min each = 2 hours)
-    { duration: '10m', target: 85 },   // Drop
-    { duration: '10m', target: 250 },  // Spike 1
-    { duration: '10m', target: 90 },   // Drop
-    { duration: '10m', target: 110 },  // Normal
-    { duration: '10m', target: 280 },  // Spike 2
-    { duration: '10m', target: 95 },   // Drop
-    { duration: '10m', target: 115 },  // Normal
-    { duration: '10m', target: 220 },  // Spike 3
-    { duration: '10m', target: 80 },   // Drop
-    { duration: '10m', target: 320 },  // Spike 4 (highest)
-    { duration: '10m', target: 105 },  // Normal
-    { duration: '10m', target: 90 }    // Final
-  ],
+  scenarios: {
+    noisy_baseline: {
+      executor: 'ramping-arrival-rate',
+      startRate: 80,
+      timeUnit: '1s',
+      preAllocatedVUs: 250,
+      maxVUs: 1000,
+      stages: TRAFFIC_STAGES.map(({ duration, target }) => ({ duration, target })),
+    }
+  },
   
   thresholds: {
     'http_req_duration': ['p(95)<800'],
@@ -67,10 +75,28 @@ export const options = {
 
 let lastSpikeTime = 0;
 
-export default function() {
-  // Detect if we're in a spike phase (based on current VU count)
+function currentTargetRps(elapsedMinutes) {
+  let previousTarget = 80;
+  let stageStart = 0;
+
+  for (const stage of TRAFFIC_STAGES) {
+    const stageEnd = stageStart + stage.minutes;
+    if (elapsedMinutes <= stageEnd) {
+      const progress = Math.max(0, (elapsedMinutes - stageStart) / stage.minutes);
+      return previousTarget + ((stage.target - previousTarget) * progress);
+    }
+    previousTarget = stage.target;
+    stageStart = stageEnd;
+  }
+
+  return TRAFFIC_STAGES[TRAFFIC_STAGES.length - 1].target;
+}
+
+export default function(data) {
   const currentTime = Date.now();
-  const isSpike = __VU > 150; // Approximate spike detection
+  const elapsedMinutes = (currentTime - data.START_TIME) / 60000;
+  const targetRps = currentTargetRps(elapsedMinutes);
+  const isSpike = targetRps > 150;
   
   if (isSpike && currentTime - lastSpikeTime > 5000) {
     spikeEvents.add(1);
@@ -78,7 +104,7 @@ export default function() {
   }
   
   // Calculate noise level (variance in request rate)
-  const variance = Math.abs(__VU - 100) / 100;
+  const variance = Math.abs(targetRps - 100) / 100;
   noiseLevel.add(variance);
   
   // Randomly distribute load with bias during spikes
@@ -116,9 +142,7 @@ export function testPaymentService(isSpike) {
   paymentLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  // Variable sleep to add to noise
-  const sleepBase = isSpike ? 0.05 : 0.15;
-  sleep(sleepBase + Math.random() * 0.3);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testLedgerService(isSpike) {
@@ -143,8 +167,7 @@ export function testLedgerService(isSpike) {
   ledgerLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  const sleepBase = isSpike ? 0.08 : 0.2;
-  sleep(sleepBase + Math.random() * 0.35);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testFraudService(isSpike) {
@@ -181,8 +204,11 @@ export function testFraudService(isSpike) {
   fraudLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  const sleepBase = isSpike ? 0.06 : 0.18;
-  sleep(sleepBase + Math.random() * 0.4);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
+}
+
+export function setup() {
+  return { START_TIME: Date.now() };
 }
 
 export function handleSummary(data) {

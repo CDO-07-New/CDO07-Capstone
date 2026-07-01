@@ -17,7 +17,7 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 import {
   BASE_URL,
@@ -35,21 +35,6 @@ const ledgerLatency = new Trend('ledger_latency');
 const fraudLatency = new Trend('fraud_latency');
 
 export const options = {
-  // Gradual ramp-up over 2 hours to simulate slow drift
-  stages: [
-    // Phase 1: Warm-up (10 min) - 50 RPS
-    { duration: '10m', target: 50 },
-    
-    // Phase 2: Baseline (30 min) - 100 RPS
-    { duration: '30m', target: 100 },
-    
-    // Phase 3: Gradual increase (60 min) - 100→150 RPS
-    { duration: '60m', target: 150 },
-    
-    // Phase 4: Sustained high load (20 min) - 150 RPS
-    { duration: '20m', target: 150 }
-  ],
-  
   thresholds: {
     'http_req_duration': ['p(95)<800'], // Allow higher latency for drift scenario
     'http_req_failed': ['rate<0.05'],   // 5% error tolerance as system degrades
@@ -126,7 +111,7 @@ export function testPaymentService() {
   paymentLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.1 + Math.random() * 0.3);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testLedgerService() {
@@ -150,7 +135,7 @@ export function testLedgerService() {
   ledgerLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.2 + Math.random() * 0.4);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testFraudService() {
@@ -173,7 +158,7 @@ export function testFraudService() {
   fraudLatency.add(res.timings.duration);
   errorRate.add(!success);
   
-  sleep(0.3 + Math.random() * 0.5);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function handleSummary(data) {

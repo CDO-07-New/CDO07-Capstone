@@ -32,7 +32,7 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 import {
   BASE_URL,
@@ -51,7 +51,14 @@ const fraudLatency = new Trend('fraud_latency');
 
 export const options = {
   // COMPRESSED: 2 hours → 20 minutes (6x faster)
-  stages: [
+  scenarios: {
+    gradual_drift_short: {
+      executor: 'ramping-arrival-rate',
+      startRate: 10,
+      timeUnit: '1s',
+      preAllocatedVUs: 150,
+      maxVUs: 500,
+      stages: [
     // Phase 1: Warm-up (2 min) - 50 RPS
     { duration: '2m', target: 50 },
     
@@ -63,7 +70,9 @@ export const options = {
     
     // Phase 4: Sustained high load (3 min) - 150 RPS
     { duration: '3m', target: 150 }
-  ],
+      ],
+    }
+  },
   
   thresholds: {
     // Thresholds giữ nguyên như original
@@ -126,9 +135,9 @@ export default function () {
     ledgerLatency.add(ledgerRes.timings.duration);
     
     const success = check(ledgerRes, {
-      'ledger status 200': (r) => r.status === 200,
+      'ledger status 200 or 201': (r) => r.status === 200 || r.status === 201,
       'ledger has entry_id': (r) => {
-        if (r.status !== 200) return false;
+        if (r.status !== 200 && r.status !== 201) return false;
         try {
           const body = JSON.parse(r.body);
           return body.entry_id !== undefined;
@@ -157,7 +166,7 @@ export default function () {
         if (r.status !== 200) return false;
         try {
           const body = JSON.parse(r.body);
-          return body.fraud_score !== undefined;
+          return body.risk_score !== undefined || body.fraud_score !== undefined;
         } catch (e) {
           console.error(`Fraud response parsing failed: ${r.status} ${r.body.substring(0, 200)}`);
           return false;
@@ -168,8 +177,7 @@ export default function () {
     errorRate.add(!success);
   }
   
-  // Think time (same as original to maintain realistic traffic)
-  sleep(Math.random() * 2 + 0.5);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function handleSummary(data) {

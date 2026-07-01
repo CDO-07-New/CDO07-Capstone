@@ -18,7 +18,7 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 import {
   BASE_URL,
@@ -37,7 +37,14 @@ const ledgerLatency = new Trend('ledger_latency');
 const fraudLatency = new Trend('fraud_latency');
 
 export const options = {
-  stages: [
+  scenarios: {
+    sudden_spike: {
+      executor: 'ramping-arrival-rate',
+      startRate: 100,
+      timeUnit: '1s',
+      preAllocatedVUs: 300,
+      maxVUs: 1000,
+      stages: [
     // Phase 1: Normal baseline (30 min)
     { duration: '30m', target: 100 },
     
@@ -52,7 +59,9 @@ export const options = {
     
     // Phase 5: Back to baseline (58 min)
     { duration: '58m', target: 100 }
-  ],
+      ],
+    }
+  },
   
   thresholds: {
     'http_req_duration': ['p(95)<1000'], // Relaxed during spike
@@ -109,7 +118,7 @@ export function testPaymentService() {
   errorRate.add(!success);
   spikeRequests.add(1);
   
-  sleep(0.05 + Math.random() * 0.1); // Shorter sleep during spike
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testLedgerService() {
@@ -128,7 +137,7 @@ export function testLedgerService() {
   errorRate.add(!success);
   spikeRequests.add(1);
   
-  sleep(0.1 + Math.random() * 0.2);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function testFraudService() {
@@ -151,7 +160,7 @@ export function testFraudService() {
   errorRate.add(!success);
   spikeRequests.add(1);
   
-  sleep(0.1 + Math.random() * 0.15);
+  // Arrival-rate executor controls pacing; no sleep is needed here.
 }
 
 export function handleSummary(data) {
