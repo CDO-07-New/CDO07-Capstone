@@ -23,8 +23,22 @@ const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 // Initialize Kinesis client
 const kinesis = new AWS.Kinesis({ region: AWS_REGION });
 
+// Request rate counter for dynamic metric simulation
+let requestCounter = 0;
+let currentRps = 0;
+setInterval(() => {
+  currentRps = requestCounter;
+  requestCounter = 0;
+}, 1000);
+
 // Middleware
 app.use(express.json());
+app.use((req, res, next) => {
+  if (req.path !== '/health') {
+    requestCounter++;
+  }
+  next();
+});
 
 // Helper to extract tenant_id from request
 function getTenantId(req) {
@@ -171,10 +185,10 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
-      // Simulate CPU load based on request latency:
-      // latency <= 100ms -> cpu ~ 30-45% (normal ML baseline)
-      // latency >= 400ms -> cpu ~ 85-100% (overloaded ML serving)
-      value: Math.min(100, Math.max(15, 20 + (latency / 5) + Math.random() * 10)),
+      // Simulate CPU load based on request throughput (RPS):
+      // baseline (20 RPS) -> cpu ~ 35-50%
+      // spike (100+ RPS) -> cpu ~ 85-100%
+      value: Math.min(100, Math.max(15, 20 + (currentRps * 1.5) + Math.random() * 10)),
       labels: { operation, batch_size: batchSize }
     },
     {
@@ -182,7 +196,8 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
-      value: Math.min(100, memUsage + Math.random() * 10),
+      // Simulate Memory load proportional to RPS
+      value: Math.min(100, Math.max(15, 30 + (currentRps * 0.8) + Math.random() * 5)),
       labels: { operation, batch_size: batchSize }
     },
     {
@@ -197,19 +212,18 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
       ts: timestamp,
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
-      // Redis cache hit rate for ML model lookups - drops under memory pressure
-      // Telemetry contract Signal 6: cache_hit_rate_pct
+      // Redis cache hit rate for ML model lookups - drops under high request rate (cache thrashing)
       metric_type: 'cache_hit_rate_pct',
-      value: Math.max(0, Math.min(100, 85 - (cpuUsage * 0.3) - Math.random() * 10)),
+      value: Math.max(0, Math.min(100, 95 - (currentRps * 0.5) - Math.random() * 5)),
       labels: { operation, cache_type: 'redis' }
     },
     {
       ts: timestamp,
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
-      // Active connections to fraud inference workers
+      // Active connections to fraud inference workers proportional to RPS
       metric_type: 'active_connections',
-      value: Math.max(1, Math.floor(cpuUsage * 0.4 + (batchSize || 0) * 0.5 + Math.random() * 15)),
+      value: Math.max(1, Math.floor(currentRps * 0.8 + Math.random() * 5)),
       labels: { operation }
     }
   ];

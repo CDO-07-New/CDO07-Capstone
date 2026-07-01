@@ -23,8 +23,22 @@ const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 // Initialize Kinesis client
 const kinesis = new AWS.Kinesis({ region: AWS_REGION });
 
+// Request rate counter for dynamic metric simulation
+let requestCounter = 0;
+let currentRps = 0;
+setInterval(() => {
+  currentRps = requestCounter;
+  requestCounter = 0;
+}, 1000);
+
 // Middleware
 app.use(express.json());
+app.use((req, res, next) => {
+  if (req.path !== '/health') {
+    requestCounter++;
+  }
+  next();
+});
 
 // Helper to extract tenant_id from request
 function getTenantId(req) {
@@ -153,10 +167,10 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'cpu_usage_percent',
-      // Simulate CPU load based on request latency:
-      // latency <= 100ms -> cpu ~ 25-40%
-      // latency >= 500ms -> cpu ~ 80-100%
-      value: Math.min(100, Math.max(15, 20 + (latency / 6) + Math.random() * 10)),
+      // Simulate CPU load based on request throughput (RPS):
+      // baseline (20 RPS total) -> cpu ~ 35-50%
+      // spike (100+ RPS total) -> cpu ~ 80-100%
+      value: Math.min(100, Math.max(15, 20 + (currentRps * 1.0) + Math.random() * 10)),
       labels: { operation }
     },
     {
@@ -164,8 +178,8 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
       metric_type: 'memory_usage_percent',
-      // Memory increases under database connection leak simulation
-      value: Math.min(100, Math.max(15, 30 + (latency / 10) + Math.random() * 5)),
+      // Memory increases under DB workload pressure
+      value: Math.min(100, Math.max(15, 30 + (currentRps * 0.6) + Math.random() * 5)),
       labels: { operation }
     },
     {
@@ -180,19 +194,18 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       ts: timestamp,
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
-      // Ledger SQS queue depth - grows when entry/reconcile workload exceeds worker capacity
-      // This is the PRIMARY signal for TF4 slow-leak and gradual-drift scenarios
+      // Ledger SQS queue depth - grows when request rate increases
       metric_type: 'queue_depth',
-      value: Math.max(0, Math.floor((latency / 50) * (1 + cpuUsage / 200) * (1 + Math.random() * 0.4))),
+      value: Math.max(0, Math.floor((currentRps * 0.3) * (1 + Math.random() * 0.2))),
       labels: { operation, queue_name: 'ledger-events-sqs' }
     },
     {
       ts: timestamp,
       tenant_id: tenantId,
       service_id: SERVICE_NAME,
-      // DB connection pool % - grows under reconcile load (ledger-svc is DB-heavy)
+      // DB connection pool % - grows under request rate (ledger-svc is DB-heavy)
       metric_type: 'db_connection_pool_pct',
-      value: Math.min(100, 30 + (latency / 30) + Math.random() * 10),
+      value: Math.min(100, Math.max(10, 30 + (currentRps * 0.5) + Math.random() * 5)),
       labels: { operation, db_type: 'mysql' }
     }
   ];
