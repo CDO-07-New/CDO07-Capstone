@@ -18,6 +18,11 @@ output "alb_dns_name" {
   value       = module.networking.alb_dns_name
 }
 
+output "ai_predict_api_url" {
+  description = "IAM-authenticated API Gateway URL for AI Engine predict route."
+  value       = "${module.ai_predict_api.invoke_url}/v1/predict"
+}
+
 output "kinesis_stream_name" {
   description = "Kinesis Data Stream name for telemetry ingestion."
   value       = module.streaming.stream_name
