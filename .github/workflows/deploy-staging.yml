@@ -132,6 +132,9 @@ jobs:
             jq --arg image "${AI_IMAGE_URI}" \
               '. + {"ai-serving": $image}' "$manifest" > "${manifest}.tmp"
             mv "${manifest}.tmp" "$manifest"
+          elif [[ "${GITHUB_EVENT_NAME}" == "repository_dispatch" ]]; then
+            echo "::error title=AI image missing::repository_dispatch must include client_payload.ai_image_uri."
+            exit 1
           else
             echo "::notice title=AI image missing::Provide workflow input ai_image_uri or repository variable STAGING_AI_IMAGE_URI to deploy the external AI engine image."
           fi
@@ -198,7 +201,7 @@ jobs:
         env:
           ECS_CLUSTER: ${{ env.ENVIRONMENT }}-tf-4-aiops-cluster
           ECS_SERVICE_NAME: foresight-lens-engine
-          CONTAINER_NAME: foresight-lens
+          CONTAINER_NAME: foresight-lens-engine
           CONTAINER_PORT: '8080'
           CODEDEPLOY_APP: tf4-cdo07-${{ env.ENVIRONMENT }}-foresight-lens-engine
           CODEDEPLOY_GROUP: tf4-cdo07-${{ env.ENVIRONMENT }}-foresight-lens-engine

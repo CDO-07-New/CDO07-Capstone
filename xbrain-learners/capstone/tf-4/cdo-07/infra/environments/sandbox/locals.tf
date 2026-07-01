@@ -10,7 +10,7 @@ locals {
   # Default to placeholders if not yet pushed
   ecr_account_id = data.aws_caller_identity.current.account_id
   ecr_region     = local.aws_region
-  
+
   ecr_image_uri_payment = "${local.ecr_account_id}.dkr.ecr.${local.ecr_region}.amazonaws.com/cdo-07-payment-gw:latest"
   ecr_image_uri_ledger  = "${local.ecr_account_id}.dkr.ecr.${local.ecr_region}.amazonaws.com/cdo-07-ledger-svc:latest"
   ecr_image_uri_fraud   = "${local.ecr_account_id}.dkr.ecr.${local.ecr_region}.amazonaws.com/cdo-07-fraud-detection:latest"

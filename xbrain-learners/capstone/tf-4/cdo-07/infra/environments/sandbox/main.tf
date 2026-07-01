@@ -111,13 +111,13 @@ module "mock_services" {
   kinesis_stream_arn    = module.streaming.stream_arn
   kinesis_stream_name   = module.streaming.stream_name
   kms_key_arn           = local.kms_key_arn
-  
+
   # ECR Image URIs - Real mock services instead of nginx placeholders
   ecr_image_uri_payment = local.ecr_image_uri_payment
   ecr_image_uri_ledger  = local.ecr_image_uri_ledger
   ecr_image_uri_fraud   = local.ecr_image_uri_fraud
-  
-  tags                  = local.common_tags
+
+  tags = local.common_tags
 }
 
 # --- Layer 3d: AI Engine ---
@@ -180,13 +180,13 @@ module "window_feeder" {
 
   environment_variables = {
     # InfluxDB connection (replaces Timestream LiveAnalytics)
-    INFLUXDB_URL                     = module.audit_s3.influxdb_endpoint_url
-    INFLUXDB_BUCKET                  = module.audit_s3.influxdb_bucket
-    INFLUXDB_ORG                     = module.audit_s3.influxdb_org
-    INFLUXDB_SECRET_ARN              = module.audit_s3.influxdb_secret_arn
-    INFLUXDB_QUERY_WINDOW            = "2h"
-    METRIC_WINDOW_STEP_SECONDS       = "300"
-    FORWARD_FILL_LOOKBACK_SECONDS    = "900"
+    INFLUXDB_URL                  = module.audit_s3.influxdb_endpoint_url
+    INFLUXDB_BUCKET               = module.audit_s3.influxdb_bucket
+    INFLUXDB_ORG                  = module.audit_s3.influxdb_org
+    INFLUXDB_SECRET_ARN           = module.audit_s3.influxdb_secret_arn
+    INFLUXDB_QUERY_WINDOW         = "2h"
+    METRIC_WINDOW_STEP_SECONDS    = "300"
+    FORWARD_FILL_LOOKBACK_SECONDS = "900"
     # AI Engine URL - Direct to Internal ALB (SG-to-SG authorization)
     AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"

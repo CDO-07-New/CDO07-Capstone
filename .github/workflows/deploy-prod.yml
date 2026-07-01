@@ -68,7 +68,6 @@ jobs:
             gh run list \
               --repo "${GITHUB_REPOSITORY}" \
               --workflow deploy-staging.yml \
-              --branch develop \
               --status success \
               --json headSha,databaseId,url \
               --limit 100 \
@@ -193,7 +192,7 @@ jobs:
         env:
           ECS_CLUSTER: ${{ env.ENVIRONMENT }}-tf-4-aiops-cluster
           ECS_SERVICE_NAME: foresight-lens-engine
-          CONTAINER_NAME: foresight-lens
+          CONTAINER_NAME: foresight-lens-engine
           CONTAINER_PORT: '8080'
           CODEDEPLOY_APP: tf4-cdo07-${{ env.ENVIRONMENT }}-foresight-lens-engine
           CODEDEPLOY_GROUP: tf4-cdo07-${{ env.ENVIRONMENT }}-foresight-lens-engine

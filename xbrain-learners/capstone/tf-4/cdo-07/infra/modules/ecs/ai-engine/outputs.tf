@@ -32,3 +32,18 @@ output "target_group_arn" {
   description = "ARN of the AI Engine ALB target group — used for health check monitoring"
   value       = aws_lb_target_group.ai_engine.arn
 }
+
+output "green_target_group_arn" {
+  description = "ARN of the AI Engine green ALB target group used by CodeDeploy blue/green deployments."
+  value       = aws_lb_target_group.ai_engine_green.arn
+}
+
+output "codedeploy_app_name" {
+  description = "Name of the CodeDeploy ECS application for AI Engine blue/green deployments."
+  value       = aws_codedeploy_app.ai_engine.name
+}
+
+output "codedeploy_deployment_group_name" {
+  description = "Name of the CodeDeploy ECS deployment group for AI Engine blue/green deployments."
+  value       = aws_codedeploy_deployment_group.ai_engine.deployment_group_name
+}
