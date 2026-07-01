@@ -217,6 +217,7 @@ data "aws_iam_policy_document" "github_deploy" {
       "iam:CreatePolicy",
       "iam:CreatePolicyVersion",
       "iam:CreateRole",
+      "iam:CreateServiceLinkedRole",
       "iam:DeletePolicy",
       "iam:DeletePolicyVersion",
       "iam:DeleteRole",
@@ -239,6 +240,7 @@ data "aws_iam_policy_document" "github_deploy" {
     resources = [
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-*",
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project}-*",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/*",
     ]
   }
 }
