@@ -1,55 +1,94 @@
 name: Build & Push Mock Services
 
 on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to build (or all)'
+        required: true
+        type: choice
+        options:
+          - all
+          - payment-gw
+          - ledger-svc
+          - fraud-detection
   push:
     branches:
       - develop
       - main
     paths:
-      - 'mock-services/**'
+      - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/**'
       - '.github/workflows/build-mock-services.yml'
   pull_request:
     paths:
-      - 'mock-services/**'
+      - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/**'
 
 env:
   AWS_REGION: us-east-1
-  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
   detect-changes:
     name: Detect Changed Services
     runs-on: ubuntu-latest
     outputs:
-      payment-gw: ${{ steps.filter.outputs.payment-gw }}
-      ledger-svc: ${{ steps.filter.outputs.ledger-svc }}
-      fraud-detection: ${{ steps.filter.outputs.fraud-detection }}
+      payment-gw: ${{ steps.filter.outputs.payment-gw || steps.manual.outputs.payment-gw }}
+      ledger-svc: ${{ steps.filter.outputs.ledger-svc || steps.manual.outputs.ledger-svc }}
+      fraud-detection: ${{ steps.filter.outputs.fraud-detection || steps.manual.outputs.fraud-detection }}
     steps:
       - uses: actions/checkout@v4
       
+      - name: Manual trigger selection
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "payment-gw" ]; then
+            echo "payment-gw=true" >> $GITHUB_OUTPUT
+          else
+            echo "payment-gw=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "ledger-svc" ]; then
+            echo "ledger-svc=true" >> $GITHUB_OUTPUT
+          else
+            echo "ledger-svc=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "fraud-detection" ]; then
+            echo "fraud-detection=true" >> $GITHUB_OUTPUT
+          else
+            echo "fraud-detection=false" >> $GITHUB_OUTPUT
+          fi
+      
       - uses: dorny/paths-filter@v2
         id: filter
+        if: github.event_name != 'workflow_dispatch'
         with:
           filters: |
             payment-gw:
-              - 'mock-services/payment-gw/**'
+              - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/payment-gw/**'
             ledger-svc:
-              - 'mock-services/ledger-svc/**'
+              - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/ledger-svc/**'
             fraud-detection:
-              - 'mock-services/fraud-detection/**'
+              - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/fraud-detection/**'
 
   build-payment-gw:
     name: Build Payment Gateway
     needs: detect-changes
-    if: needs.detect-changes.outputs.payment-gw == 'true'
+    if: |
+      needs.detect-changes.outputs.payment-gw == 'true' && 
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
@@ -62,26 +101,31 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./mock-services/payment-gw
+          context: ./xbrain-learners/capstone/tf-4/cdo-07/mock-services/payment-gw
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/cdo-07-payment-gw:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/cdo-07-payment-gw:latest
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-payment-gw:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-payment-gw:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-ledger-svc:
     name: Build Ledger Service
     needs: detect-changes
-    if: needs.detect-changes.outputs.ledger-svc == 'true'
+    if: |
+      needs.detect-changes.outputs.ledger-svc == 'true' && 
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
@@ -93,26 +137,31 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./mock-services/ledger-svc
+          context: ./xbrain-learners/capstone/tf-4/cdo-07/mock-services/ledger-svc
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/cdo-07-ledger-svc:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/cdo-07-ledger-svc:latest
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-ledger-svc:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-ledger-svc:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-fraud-detection:
     name: Build Fraud Detection
     needs: detect-changes
-    if: needs.detect-changes.outputs.fraud-detection == 'true'
+    if: |
+      needs.detect-changes.outputs.fraud-detection == 'true' && 
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
@@ -124,11 +173,11 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./mock-services/fraud-detection
+          context: ./xbrain-learners/capstone/tf-4/cdo-07/mock-services/fraud-detection
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/cdo-07-fraud-detection:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/cdo-07-fraud-detection:latest
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-fraud-detection:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-fraud-detection:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -142,13 +191,16 @@ jobs:
       (needs.build-ledger-svc.result == 'success' || needs.build-ledger-svc.result == 'skipped') &&
       (needs.build-fraud-detection.result == 'success' || needs.build-fraud-detection.result == 'skipped')
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Force new deployment (Payment GW)
@@ -194,3 +246,6 @@ jobs:
           # Internal ALB - skip smoke test if not accessible
           echo "ALB DNS: $ALB_DNS"
           echo "⚠️  ALB is internal - smoke test requires VPC access"
+
+
+

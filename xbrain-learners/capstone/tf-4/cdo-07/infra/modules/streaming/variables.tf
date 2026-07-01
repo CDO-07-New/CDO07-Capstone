@@ -25,6 +25,12 @@ variable "retention_period_hours" {
   default     = 24
 }
 
+variable "alert_sns_topic_arn" {
+  description = "ARN of the SNS topic (sns_to_slack) to notify when a Kinesis CloudWatch Alarm fires. Leave empty to suppress alarm actions."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags to apply to all resources."
   type        = map(string)

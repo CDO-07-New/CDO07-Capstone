@@ -13,6 +13,9 @@ resource "aws_cloudwatch_metric_alarm" "memory_leak" {
   statistic           = "Average"
   threshold           = 90
   alarm_description   = "Trigger rolling restart task khi bi memory leak (> 90%)"
+  alarm_actions       = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  ok_actions          = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  treat_missing_data  = "notBreaching"
 
   dimensions = {
     ClusterName = local.cluster_name
@@ -33,6 +36,9 @@ resource "aws_cloudwatch_metric_alarm" "latency_p99_high" {
   extended_statistic  = "p99"
   threshold           = 0.8 # 800ms
   alarm_description   = "API P99 Latency > 800ms. Trigger CodeDeploy Rollback & SLO breach."
+  alarm_actions       = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  ok_actions          = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  treat_missing_data  = "notBreaching"
 
   dimensions = {
     LoadBalancer = var.alb_arn_suffix
@@ -48,6 +54,9 @@ resource "aws_cloudwatch_metric_alarm" "error_rate_high" {
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
   alarm_description   = "API 5xx Error Rate > 1%. Trigger CodeDeploy Rollback & SLO breach."
+  alarm_actions       = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  ok_actions          = var.alert_sns_topic_arn != "" ? [var.alert_sns_topic_arn] : []
+  treat_missing_data  = "notBreaching"
 
   metric_query {
     id          = "e1"

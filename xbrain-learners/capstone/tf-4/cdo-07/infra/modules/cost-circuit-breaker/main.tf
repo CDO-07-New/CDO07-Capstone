@@ -340,7 +340,10 @@ resource "aws_budgets_budget" "monthly_cost" {
     threshold                 = var.warning_threshold_percent
     threshold_type            = "PERCENTAGE"
     notification_type         = "ACTUAL"
-    subscriber_sns_topic_arns = [aws_sns_topic.budget_warning.arn]
+    subscriber_sns_topic_arns = compact([
+      aws_sns_topic.budget_warning.arn,
+      var.alert_sns_topic_arn, # Forward 80% warning → Slack
+    ])
   }
 
   notification {
@@ -348,6 +351,9 @@ resource "aws_budgets_budget" "monthly_cost" {
     threshold                 = var.hard_threshold_percent
     threshold_type            = "PERCENTAGE"
     notification_type         = "ACTUAL"
-    subscriber_sns_topic_arns = [aws_sns_topic.budget_hard_trigger.arn]
+    subscriber_sns_topic_arns = compact([
+      aws_sns_topic.budget_hard_trigger.arn,
+      var.alert_sns_topic_arn, # Forward 100% hard-limit → Slack
+    ])
   }
 }
