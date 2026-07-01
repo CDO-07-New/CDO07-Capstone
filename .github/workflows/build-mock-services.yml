@@ -17,11 +17,11 @@ on:
       - develop
       - main
     paths:
-      - 'mock-services/**'
+      - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/**'
       - '.github/workflows/build-mock-services.yml'
   pull_request:
     paths:
-      - 'mock-services/**'
+      - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/**'
 
 env:
   AWS_REGION: us-east-1
@@ -66,11 +66,11 @@ jobs:
         with:
           filters: |
             payment-gw:
-              - 'mock-services/payment-gw/**'
+              - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/payment-gw/**'
             ledger-svc:
-              - 'mock-services/ledger-svc/**'
+              - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/ledger-svc/**'
             fraud-detection:
-              - 'mock-services/fraud-detection/**'
+              - 'xbrain-learners/capstone/tf-4/cdo-07/mock-services/fraud-detection/**'
 
   build-payment-gw:
     name: Build Payment Gateway
@@ -101,7 +101,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./mock-services/payment-gw
+          context: ./xbrain-learners/capstone/tf-4/cdo-07/mock-services/payment-gw
           push: true
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/cdo-07-payment-gw:${{ github.sha }}
@@ -137,7 +137,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./mock-services/ledger-svc
+          context: ./xbrain-learners/capstone/tf-4/cdo-07/mock-services/ledger-svc
           push: true
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/cdo-07-ledger-svc:${{ github.sha }}
@@ -173,7 +173,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./mock-services/fraud-detection
+          context: ./xbrain-learners/capstone/tf-4/cdo-07/mock-services/fraud-detection
           push: true
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/cdo-07-fraud-detection:${{ github.sha }}
