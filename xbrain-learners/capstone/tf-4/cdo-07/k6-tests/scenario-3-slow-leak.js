@@ -106,7 +106,7 @@ export function testPaymentService(leakFactor) {
 }
 
 export function testLedgerService(leakFactor) {
-  const basePayload = JSON.parse(generateLedgerPayload());
+  const basePayload = JSON.parse(generateLedgerPayload('ledger-svc'));
   
   // Ledger service accumulates transaction history (memory leak simulation)
   basePayload.transaction_history = Array.from(
@@ -139,7 +139,7 @@ export function testLedgerService(leakFactor) {
 }
 
 export function testFraudService(leakFactor) {
-  const basePayload = JSON.parse(generateFraudPayload());
+  const basePayload = JSON.parse(generateFraudPayload('fraud-detection'));
   
   // Fraud detection accumulates feature vectors (memory intensive)
   basePayload.feature_vector = Array.from(

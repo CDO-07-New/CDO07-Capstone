@@ -89,7 +89,7 @@ export default function() {
 export function testPaymentService() {
   // During spike, authorize requests dominate
   const endpoints = [
-    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`, payload: generatePaymentPayload(), weight: 0.7 },
+    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`, payload: generatePaymentPayload('payment-gw'), weight: 0.7 },
     { url: `${BASE_URL}${ENDPOINTS.PAYMENT.STATUS}/txn_${Date.now()}`, method: 'GET', weight: 0.3 }
   ];
   
@@ -143,8 +143,8 @@ export function testLedgerService() {
 export function testFraudService() {
   // Fraud checks spike during high payment volume
   const endpoints = [
-    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload(), weight: 0.8 },
-    { url: `${BASE_URL}${ENDPOINTS.FRAUD.BATCH}`, payload: JSON.stringify({ transactions: Array(5).fill({}) }), weight: 0.2 }
+    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload('fraud-detection'), weight: 0.8 },
+    { url: `${BASE_URL}${ENDPOINTS.FRAUD.BATCH}`, payload: JSON.stringify({ transactions: Array(5).fill({ tenant_id: 'fraud-detection' }) }), weight: 0.2 }
   ];
   
   const endpoint = Math.random() < 0.8 ? endpoints[0] : endpoints[1];

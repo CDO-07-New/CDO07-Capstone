@@ -122,9 +122,9 @@ export default function(data) {
 export function testPaymentService(isSpike) {
   // During noise spikes, introduce more variation
   const endpoints = [
-    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`, payload: generatePaymentPayload() },
-    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.CAPTURE}`, payload: JSON.stringify({ transaction_id: `txn_${Date.now()}` }) },
-    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.REFUND}`, payload: JSON.stringify({ transaction_id: `txn_${Date.now()}`, amount: 50 }) },
+    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`, payload: generatePaymentPayload('payment-gw') },
+    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.CAPTURE}`, payload: JSON.stringify({ transaction_id: `txn_${Date.now()}`, tenant_id: 'payment-gw' }) },
+    { url: `${BASE_URL}${ENDPOINTS.PAYMENT.REFUND}`, payload: JSON.stringify({ transaction_id: `txn_${Date.now()}`, amount: 50, tenant_id: 'payment-gw' }) },
     { url: `${BASE_URL}${ENDPOINTS.PAYMENT.STATUS}/txn_${Date.now()}`, method: 'GET' }
   ];
   
@@ -147,10 +147,10 @@ export function testPaymentService(isSpike) {
 
 export function testLedgerService(isSpike) {
   const endpoints = [
-    { url: `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`, payload: generateLedgerPayload() },
+    { url: `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`, payload: generateLedgerPayload('ledger-svc') },
     { url: `${BASE_URL}${ENDPOINTS.LEDGER.BALANCE}/acc_${Math.floor(Math.random() * 5000)}`, method: 'GET' },
     { url: `${BASE_URL}${ENDPOINTS.LEDGER.HISTORY}/acc_${Math.floor(Math.random() * 5000)}`, method: 'GET' },
-    { url: `${BASE_URL}${ENDPOINTS.LEDGER.RECONCILE}`, payload: JSON.stringify({ account_ids: [`acc_${Date.now()}`] }) }
+    { url: `${BASE_URL}${ENDPOINTS.LEDGER.RECONCILE}`, payload: JSON.stringify({ account_ids: [`acc_${Date.now()}`], tenant_id: 'ledger-svc' }) }
   ];
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
@@ -173,10 +173,10 @@ export function testLedgerService(isSpike) {
 export function testFraudService(isSpike) {
   // Fraud service gets extra noisy during spikes (more checks, batch operations)
   const endpoints = isSpike ? [
-    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload(), weight: 0.6 },
-    { url: `${BASE_URL}${ENDPOINTS.FRAUD.BATCH}`, payload: JSON.stringify({ transactions: Array(10).fill({}) }), weight: 0.4 }
+    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload('fraud-detection'), weight: 0.6 },
+    { url: `${BASE_URL}${ENDPOINTS.FRAUD.BATCH}`, payload: JSON.stringify({ transactions: Array(10).fill({ tenant_id: 'fraud-detection' }) }), weight: 0.4 }
   ] : [
-    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload(), weight: 0.9 },
+    { url: `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`, payload: generateFraudPayload('fraud-detection'), weight: 0.9 },
     { url: `${BASE_URL}${ENDPOINTS.FRAUD.REPORT}/txn_${Date.now()}`, method: 'GET', weight: 0.1 }
   ];
   
