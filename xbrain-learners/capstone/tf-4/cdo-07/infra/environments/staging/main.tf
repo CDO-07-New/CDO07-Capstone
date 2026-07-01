@@ -190,6 +190,22 @@ module "transformer" {
 }
 
 # =============================================================================
+# Layer 4b.0 — AI Engine API Edge (SigV4)
+# =============================================================================
+module "ai_predict_api" {
+  source = "../../modules/api-gateway-ai-edge"
+
+  project               = local.project
+  environment           = local.environment
+  vpc_id                = module.networking.vpc_id
+  private_subnet_ids    = module.networking.private_subnets
+  alb_listener_arn      = module.networking.alb_http_listener_arn
+  alb_security_group_id = module.networking.alb_security_group_id
+
+  tags = local.common_tags
+}
+
+# =============================================================================
 # Layer 4b — Window Feeder (EventBridge → Lambda → AI Engine)
 # =============================================================================
 module "window_feeder" {
@@ -224,7 +240,7 @@ module "window_feeder" {
     INFLUXDB_QUERY_WINDOW            = "2h"
     METRIC_WINDOW_STEP_SECONDS       = "300"
     FORWARD_FILL_LOOKBACK_SECONDS    = "900"
-    AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
+    AI_ENGINE_PREDICT_URL            = "${module.ai_predict_api.invoke_url}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
     AI_ENGINE_SIGV4_SERVICE          = "execute-api"
     DEPLOYMENT_VERSION               = "${local.project}-${local.environment}"
@@ -268,6 +284,12 @@ module "window_feeder" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = module.sns_to_slack.sns_topic_arn
+      },
+      {
+        Sid      = "InvokeAIPredictApi"
+        Effect   = "Allow"
+        Action   = ["execute-api:Invoke"]
+        Resource = module.ai_predict_api.predict_route_execution_arn
       },
       {
         Sid      = "ManageVpcNetworkInterfaces"
