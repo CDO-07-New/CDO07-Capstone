@@ -17,7 +17,6 @@ resource "null_resource" "push_mock_image" {
 
   triggers = {
     repository_url = aws_ecr_repository.mock_repos[each.key].repository_url
-    source_image   = "public.ecr.aws/nginx/nginx:1.26-alpine"
   }
 
   provisioner "local-exec" {
@@ -26,12 +25,14 @@ resource "null_resource" "push_mock_image" {
       $ErrorActionPreference = "Stop"
       $Region = "${var.aws_region}"
       $RepoUrl = "${aws_ecr_repository.mock_repos[each.key].repository_url}"
-      $SourceImage = "public.ecr.aws/nginx/nginx:1.26-alpine"
 
       $Pass = aws ecr get-login-password --region $Region
       docker login --username AWS --password $Pass $RepoUrl
-      docker pull $SourceImage
-      docker tag $SourceImage "$($RepoUrl):v1.0.0"
+      
+      Write-Host "Building Docker Image for ${each.key}..."
+      docker build -t "$($RepoUrl):v1.0.0" "..\..\..\mock-services\${each.key}"
+      
+      Write-Host "Pushing Docker Image to ECR..."
       docker push "$($RepoUrl):v1.0.0"
     EOT
   }

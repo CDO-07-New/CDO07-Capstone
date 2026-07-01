@@ -140,6 +140,9 @@ module "ai_engine" {
   audit_s3_bucket        = module.audit_s3.audit_bucket_name
   audit_s3_bucket_arn    = module.audit_s3.audit_bucket_arn
   kms_key_arn            = local.kms_key_arn
+  
+  ecr_image_uri          = local.ecr_image_uri_ai
+  
   tags                   = local.common_tags
 }
 

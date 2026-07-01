@@ -133,6 +133,10 @@ module "mock_services" {
   kinesis_stream_name   = module.streaming.stream_name
   kms_key_arn           = local.kms_key_arn
 
+  ecr_image_uri_payment = local.ecr_image_uri_payment
+  ecr_image_uri_ledger  = local.ecr_image_uri_ledger
+  ecr_image_uri_fraud   = local.ecr_image_uri_fraud
+
   tags = local.common_tags
 }
 
@@ -153,6 +157,8 @@ module "ai_engine" {
   audit_s3_bucket        = module.audit_s3.audit_bucket_name
   audit_s3_bucket_arn    = module.audit_s3.audit_bucket_arn
   kms_key_arn            = local.kms_key_arn
+
+  ecr_image_uri          = local.ecr_image_uri_ai
 
   tags = local.common_tags
 }
