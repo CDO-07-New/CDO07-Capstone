@@ -175,4 +175,10 @@ resource "aws_lb_listener_rule" "ai_engine" {
       values = ["/v1/*"]
     }
   }
+
+  lifecycle {
+    ignore_changes = [
+      action[0].target_group_arn
+    ]
+  }
 }
