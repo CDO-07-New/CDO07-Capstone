@@ -112,7 +112,6 @@ def set_env_vars(monkeypatch):
     monkeypatch.setenv("FORWARD_FILL_LOOKBACK_SECONDS", "900")
     monkeypatch.setenv("AI_ENGINE_PREDICT_URL", "http://test-ai-engine/v1/predict")
     monkeypatch.setenv("AI_ENGINE_TIMEOUT_SECONDS", "5")
-    monkeypatch.setenv("AI_ENGINE_SIGV4_SERVICE", "execute-api")
     monkeypatch.setenv("DEPLOYMENT_VERSION", "test-version")
     monkeypatch.setenv("INFERENCE_ENABLED_PARAMETER_NAME", "/test/inference-enabled")
     monkeypatch.setenv("DRIFT_ALERT_SNS_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:test-drift-topic")
@@ -302,12 +301,6 @@ def test_handler_happy_path_with_drift(mock_aws_services, set_env_vars, monkeypa
             "target_end": "2026-06-26T00:00:00Z",
         },
     }))
-    monkeypatch.setattr(
-        app,
-        "_sign_ai_engine_headers",
-        Mock(side_effect=lambda _url, _body, headers: {**headers, "Authorization": "AWS4-HMAC-SHA256 test"}),
-    )
-
     mock_response = Mock()
     mock_response.return_value = FakeHttpResponse({"anomaly": True, "severity": 0.7})
     monkeypatch.setattr(app.urllib.request, "urlopen", mock_response)
@@ -323,7 +316,8 @@ def test_handler_happy_path_with_drift(mock_aws_services, set_env_vars, monkeypa
     assert "context" in payload
     assert payload["signal_window"][0]["ts"] == "2026-06-26T00:00:00Z"
     assert posted_request.get_header("X-tenant-id") == "tenant-a"
-    assert posted_request.get_header("Authorization").startswith("AWS4-HMAC-SHA256")
+    assert posted_request.get_header("X-correlation-id")
+    assert posted_request.get_header("Authorization") is None
     assert len(mock_aws_services["sns"].messages) == 1
 
 
@@ -353,12 +347,6 @@ def test_handler_ai_engine_fails_publishes_fail_open_message(mock_aws_services, 
             "target_end": "2026-06-26T00:00:00Z",
         },
     }))
-    monkeypatch.setattr(
-        app,
-        "_sign_ai_engine_headers",
-        Mock(side_effect=lambda _url, _body, headers: {**headers, "Authorization": "AWS4-HMAC-SHA256 test"}),
-    )
-
     http_error = urllib.error.HTTPError(
         url="http://test-ai-engine/v1/predict",
         code=500,

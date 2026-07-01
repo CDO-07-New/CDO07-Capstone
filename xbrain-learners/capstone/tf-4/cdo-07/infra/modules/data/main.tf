@@ -1,10 +1,10 @@
 ###############################################################################
 # S3 Audit Log Bucket — CDO-07 AI Decision Audit Trail
 #
-# Design ref: 02_infra_design §2 "Storage", 03_security_design §5.2
+# Design ref: 02_infra_design §2 "Storage", 03_security_design §5.2, ADR-004
 #
-# Stores AI prediction audit logs with lifecycle:
-#   Standard → IA (30d) → Glacier Deep Archive (90d) → Expire (365d)
+# Stores AI prediction audit logs with lifecycle (2 stages per ADR-004):
+#   Standard (0–90d) → Glacier Deep Archive (90–365d) → Expire (365d)
 #
 # Separate from baseline bucket per security design: audit logs require
 # write-only access (no delete) and different retention policies.
@@ -92,8 +92,11 @@ resource "aws_s3_bucket_ownership_controls" "audit" {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Lifecycle Rules (03_security_design §5.2)
-#    Standard → IA (30d) → Glacier Deep Archive (90d) → Expire (365d)
+# 6. Lifecycle Rules (03_security_design §5.2, ADR-004)
+#    2-stage policy:
+#      Stage 1: S3 Standard  (0–90d)   — hot tier, SRE Athena queries
+#      Stage 2: Glacier Deep Archive (90–365d) — cold compliance tier
+#      Expire after 365d
 # ---------------------------------------------------------------------------
 resource "aws_s3_bucket_lifecycle_configuration" "audit" {
   bucket = aws_s3_bucket.audit.id
@@ -106,16 +109,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "audit" {
       prefix = ""
     }
 
-    transition {
-      days          = 30
-      storage_class = "STANDARD_IA"
-    }
-
+    # Stage 2: Move to Glacier Deep Archive after 90 days
     transition {
       days          = 90
       storage_class = "DEEP_ARCHIVE"
     }
 
+    # Expire after 1 year (compliance retention limit)
     expiration {
       days = 365
     }

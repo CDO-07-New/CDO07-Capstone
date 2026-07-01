@@ -13,8 +13,6 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import boto3
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
 from botocore.config import Config
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -31,7 +29,6 @@ METRIC_WINDOW_STEP_SECONDS = int(os.environ.get("METRIC_WINDOW_STEP_SECONDS", "3
 FORWARD_FILL_LOOKBACK_SECONDS = int(os.environ.get("FORWARD_FILL_LOOKBACK_SECONDS", "900"))
 AI_ENGINE_PREDICT_URL = os.environ.get("AI_ENGINE_PREDICT_URL")
 AI_ENGINE_TIMEOUT_SECONDS = int(os.environ.get("AI_ENGINE_TIMEOUT_SECONDS", "5"))
-AI_ENGINE_SIGV4_SERVICE = os.environ.get("AI_ENGINE_SIGV4_SERVICE", "execute-api")
 DEPLOYMENT_VERSION = os.environ.get("DEPLOYMENT_VERSION")
 INFERENCE_ENABLED_PARAMETER_NAME = os.environ.get("INFERENCE_ENABLED_PARAMETER_NAME")
 DRIFT_ALERT_SNS_TOPIC_ARN = os.environ.get("DRIFT_ALERT_SNS_TOPIC_ARN")
@@ -56,7 +53,7 @@ def load_config():
     global REGION
     global INFLUXDB_URL, INFLUXDB_BUCKET, INFLUXDB_ORG, INFLUXDB_SECRET_ARN, INFLUXDB_QUERY_WINDOW
     global METRIC_WINDOW_STEP_SECONDS, FORWARD_FILL_LOOKBACK_SECONDS
-    global AI_ENGINE_PREDICT_URL, AI_ENGINE_TIMEOUT_SECONDS, AI_ENGINE_SIGV4_SERVICE, DEPLOYMENT_VERSION
+    global AI_ENGINE_PREDICT_URL, AI_ENGINE_TIMEOUT_SECONDS, DEPLOYMENT_VERSION
     global INFERENCE_ENABLED_PARAMETER_NAME, DRIFT_ALERT_SNS_TOPIC_ARN
 
     required = [
@@ -88,7 +85,6 @@ def load_config():
     FORWARD_FILL_LOOKBACK_SECONDS = int(os.environ["FORWARD_FILL_LOOKBACK_SECONDS"])
     AI_ENGINE_PREDICT_URL = os.environ["AI_ENGINE_PREDICT_URL"]
     AI_ENGINE_TIMEOUT_SECONDS = int(os.environ["AI_ENGINE_TIMEOUT_SECONDS"])
-    AI_ENGINE_SIGV4_SERVICE = os.environ.get("AI_ENGINE_SIGV4_SERVICE", "execute-api")
     DEPLOYMENT_VERSION = os.environ["DEPLOYMENT_VERSION"]
     INFERENCE_ENABLED_PARAMETER_NAME = os.environ["INFERENCE_ENABLED_PARAMETER_NAME"]
     DRIFT_ALERT_SNS_TOPIC_ARN = os.environ["DRIFT_ALERT_SNS_TOPIC_ARN"]
@@ -434,22 +430,6 @@ def build_ai_predict_requests(metrics_data: dict) -> list[dict]:
     return requests_to_send
 
 
-def _sign_ai_engine_headers(url: str, body: str, headers: dict) -> dict:
-    session = boto3.Session()
-    credentials = session.get_credentials()
-    if credentials is None:
-        raise RuntimeError("AWS credentials are required to SigV4 sign AI Engine requests")
-
-    request = AWSRequest(
-        method="POST",
-        url=url,
-        data=body.encode("utf-8"),
-        headers=headers.copy(),
-    )
-    SigV4Auth(credentials.get_frozen_credentials(), AI_ENGINE_SIGV4_SERVICE, REGION).add_auth(request)
-    return dict(request.headers.items())
-
-
 def invoke_ai_engine(metrics_data: dict) -> dict:
     """Post the prepared metric window to AI Engine /v1/predict."""
     load_config()
@@ -465,12 +445,11 @@ def invoke_ai_engine(metrics_data: dict) -> dict:
                 "X-Tenant-Id": predict_request["tenant_id"],
                 "X-Correlation-Id": predict_request["correlation_id"],
             }
-            signed_headers = _sign_ai_engine_headers(AI_ENGINE_PREDICT_URL, body, headers)
             request = urllib.request.Request(
                 AI_ENGINE_PREDICT_URL,
                 data=body.encode("utf-8"),
                 method="POST",
-                headers=signed_headers,
+                headers=headers,
             )
 
             with urllib.request.urlopen(request, timeout=AI_ENGINE_TIMEOUT_SECONDS) as response:
