@@ -14,12 +14,17 @@ output "inference_enabled_parameter_name" {
 }
 
 output "alb_dns_name" {
-  description = "DNS name of the internal ALB."
+  description = "DNS name of the ALB."
   value       = module.networking.alb_dns_name
 }
 
+output "window_feeder_ai_predict_url" {
+  description = "ALB URL used by the Window Feeder to call the AI Engine predict route."
+  value       = "http://${module.networking.alb_dns_name}/v1/predict"
+}
+
 output "ai_predict_api_url" {
-  description = "IAM-authenticated API Gateway URL for AI Engine predict route."
+  description = "Legacy IAM-authenticated API Gateway URL for AI Engine predict route; not used by Window Feeder."
   value       = "${module.ai_predict_api.invoke_url}/v1/predict"
 }
 

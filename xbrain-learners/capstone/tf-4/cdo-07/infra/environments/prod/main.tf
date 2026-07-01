@@ -141,7 +141,7 @@ module "transformer" {
   tags               = local.common_tags
 }
 
-# --- Layer 4b.0: AI Engine API Edge (SigV4) ---
+# --- Layer 4b.0: Legacy AI Engine API Edge (not used by Window Feeder) ---
 module "ai_predict_api" {
   source = "../../modules/api-gateway-ai-edge"
 
@@ -198,7 +198,6 @@ module "window_feeder" {
       { Sid = "ReadInfluxDBToken", Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [module.audit_s3.influxdb_secret_arn] },
       { Sid = "ReadInferenceGate", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:${local.aws_region}:*:parameter/${local.project}/${local.environment}/inference_enabled" },
       { Sid = "ReadBaselines", Effect = "Allow", Action = ["s3:GetObject", "s3:ListBucket"], Resource = [module.s3_baseline.bucket_arn, "${module.s3_baseline.bucket_arn}/*"] },
-      { Sid = "InvokeAIPredictApi", Effect = "Allow", Action = ["execute-api:Invoke"], Resource = module.ai_predict_api.predict_route_execution_arn },
       { Sid = "PublishDriftAlerts", Effect = "Allow", Action = ["sns:Publish"], Resource = module.sns_to_slack.sns_topic_arn },
       { Sid = "ManageVpcENIs", Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface", "ec2:DescribeNetworkInterfaces"], Resource = "*" },
       { Sid = "KMSDecrypt", Effect = "Allow", Action = ["kms:Decrypt", "kms:DescribeKey"], Resource = [local.kms_key_arn] },

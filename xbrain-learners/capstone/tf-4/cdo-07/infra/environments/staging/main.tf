@@ -38,7 +38,7 @@ module "observability" {
   subnet_ids         = module.networking.private_subnets
   security_group_ids = [module.networking.lambda_security_group_id]
 
-  tags        = local.common_tags
+  tags = local.common_tags
 }
 
 # =============================================================================
@@ -194,7 +194,7 @@ module "transformer" {
 }
 
 # =============================================================================
-# Layer 4b.0 — AI Engine API Edge (SigV4)
+# Layer 4b.0 — Legacy AI Engine API Edge (not used by Window Feeder)
 # =============================================================================
 module "ai_predict_api" {
   source = "../../modules/api-gateway-ai-edge"
@@ -288,12 +288,6 @@ module "window_feeder" {
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = module.sns_to_slack.sns_topic_arn
-      },
-      {
-        Sid      = "InvokeAIPredictApi"
-        Effect   = "Allow"
-        Action   = ["execute-api:Invoke"]
-        Resource = module.ai_predict_api.predict_route_execution_arn
       },
       {
         Sid      = "ManageVpcNetworkInterfaces"
