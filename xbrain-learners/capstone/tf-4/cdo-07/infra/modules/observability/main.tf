@@ -48,6 +48,27 @@ resource "aws_iam_role_policy_attachment" "grafana_timestream" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonTimestreamReadOnlyAccess"
 }
 
+resource "aws_iam_role_policy" "grafana_vpc" {
+  name = "grafana-vpc-access"
+  role = aws_iam_role.grafana.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DescribeSubnets",
+          "ec2:DeleteNetworkInterface",
+          "ec2:DescribeVpcs"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # ---------------------------------------------------------------------------
 # Amazon Managed Grafana Workspace
 # ---------------------------------------------------------------------------
@@ -59,6 +80,11 @@ resource "aws_grafana_workspace" "main" {
   role_arn                 = aws_iam_role.grafana.arn
 
   data_sources = ["CLOUDWATCH", "TIMESTREAM"]
+
+  vpc_configuration {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = var.security_group_ids
+  }
 
   tags = var.tags
 }

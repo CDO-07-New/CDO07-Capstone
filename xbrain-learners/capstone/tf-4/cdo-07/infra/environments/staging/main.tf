@@ -34,6 +34,10 @@ module "observability" {
 
   project     = local.project
   environment = local.environment
+
+  subnet_ids         = module.networking.private_subnets
+  security_group_ids = [module.networking.lambda_security_group_id]
+
   tags        = local.common_tags
 }
 
