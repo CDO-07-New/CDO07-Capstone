@@ -92,8 +92,8 @@ export default function () {
   if (rand < 0.80) {
     // Payment Gateway
     const paymentRes = http.post(
-      `${BASE_URL}${ENDPOINTS.payment.authorize}`,
-      JSON.stringify(generatePaymentPayload(tenant)),
+      `${BASE_URL}${ENDPOINTS.PAYMENT.AUTHORIZE}`,
+      generatePaymentPayload(tenant),
       { headers: HEADERS, tags: { endpoint: 'payment-authorize', tenant } }
     );
     
@@ -109,8 +109,8 @@ export default function () {
   } else if (rand < 0.95) {
     // Ledger Service
     const ledgerRes = http.post(
-      `${BASE_URL}${ENDPOINTS.ledger.entry}`,
-      JSON.stringify(generateLedgerPayload(tenant)),
+      `${BASE_URL}${ENDPOINTS.LEDGER.ENTRY}`,
+      generateLedgerPayload(tenant),
       { headers: HEADERS, tags: { endpoint: 'ledger-entry', tenant } }
     );
     
@@ -126,8 +126,8 @@ export default function () {
   } else {
     // Fraud Detection
     const fraudRes = http.post(
-      `${BASE_URL}${ENDPOINTS.fraud.check}`,
-      JSON.stringify(generateFraudPayload(tenant)),
+      `${BASE_URL}${ENDPOINTS.FRAUD.CHECK}`,
+      generateFraudPayload(tenant),
       { headers: HEADERS, tags: { endpoint: 'fraud-check', tenant } }
     );
     
