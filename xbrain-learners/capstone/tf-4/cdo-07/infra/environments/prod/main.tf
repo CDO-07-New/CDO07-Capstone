@@ -141,6 +141,20 @@ module "transformer" {
   tags               = local.common_tags
 }
 
+# --- Layer 4b.0: AI Engine API Edge (SigV4) ---
+module "ai_predict_api" {
+  source = "../../modules/api-gateway-ai-edge"
+
+  project               = local.project
+  environment           = local.environment
+  vpc_id                = module.networking.vpc_id
+  private_subnet_ids    = module.networking.private_subnets
+  alb_listener_arn      = module.networking.alb_http_listener_arn
+  alb_security_group_id = module.networking.alb_security_group_id
+
+  tags = local.common_tags
+}
+
 # --- Layer 4b: Window Feeder ---
 module "window_feeder" {
   source = "../../modules/lambda-scheduled-function"
@@ -168,7 +182,7 @@ module "window_feeder" {
     INFLUXDB_QUERY_WINDOW            = "2h"
     METRIC_WINDOW_STEP_SECONDS       = "300"
     FORWARD_FILL_LOOKBACK_SECONDS    = "900"
-    AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
+    AI_ENGINE_PREDICT_URL            = "${module.ai_predict_api.invoke_url}/v1/predict"
     AI_ENGINE_TIMEOUT_SECONDS        = "5"
     AI_ENGINE_SIGV4_SERVICE          = "execute-api"
     DEPLOYMENT_VERSION               = "${local.project}-${local.environment}"
@@ -184,6 +198,7 @@ module "window_feeder" {
       { Sid = "ReadInfluxDBToken", Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = [module.audit_s3.influxdb_secret_arn] },
       { Sid = "ReadInferenceGate", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:${local.aws_region}:*:parameter/${local.project}/${local.environment}/inference_enabled" },
       { Sid = "ReadBaselines", Effect = "Allow", Action = ["s3:GetObject", "s3:ListBucket"], Resource = [module.s3_baseline.bucket_arn, "${module.s3_baseline.bucket_arn}/*"] },
+      { Sid = "InvokeAIPredictApi", Effect = "Allow", Action = ["execute-api:Invoke"], Resource = module.ai_predict_api.predict_route_execution_arn },
       { Sid = "PublishDriftAlerts", Effect = "Allow", Action = ["sns:Publish"], Resource = module.sns_to_slack.sns_topic_arn },
       { Sid = "ManageVpcENIs", Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface", "ec2:DescribeNetworkInterfaces"], Resource = "*" },
       { Sid = "KMSDecrypt", Effect = "Allow", Action = ["kms:Decrypt", "kms:DescribeKey"], Resource = [local.kms_key_arn] },
