@@ -12,7 +12,6 @@
 
 const express = require('express');
 const AWS = require('aws-sdk');
-const os = require('os');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -155,11 +154,6 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
   }
 
   const timestamp = new Date().toISOString();
-  const cpuUsage = os.loadavg()[0] * 10;
-  const memUsage = (1 - os.freemem() / os.totalmem()) * 100;
-  
-  // Ledger service tends to use more memory (add 10-20% baseline)
-  const ledgerMemAdjustment = 15 + Math.random() * 5;
   
   const metrics = [
     {
@@ -229,7 +223,7 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
 
 // Periodic heartbeat metrics (every 30 seconds)
 setInterval(async () => {
-  await emitMetrics('heartbeat', 0);
+  await emitMetrics('heartbeat', 0, SERVICE_NAME);
 }, 30000);
 
 app.listen(PORT, () => {

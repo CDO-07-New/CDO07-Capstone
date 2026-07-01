@@ -101,10 +101,13 @@ export function testPaymentService() {
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
   const headers  = generateHeaders(tenant);
+  let namePay = endpoint.url.includes('/status/') ? `${ENDPOINTS.PAYMENT.STATUS}/:id`
+    : endpoint.url.includes('/capture') ? ENDPOINTS.PAYMENT.CAPTURE
+    : ENDPOINTS.PAYMENT.AUTHORIZE;
   
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url, { headers, tags: { tenant, endpoint: 'payment' } })
-    : http.post(endpoint.url, endpoint.payload, { headers, tags: { tenant, endpoint: 'payment' } });
+    ? http.get(endpoint.url, { headers, tags: { tenant, endpoint: 'payment', name: namePay } })
+    : http.post(endpoint.url, endpoint.payload, { headers, tags: { tenant, endpoint: 'payment', name: namePay } });
   
   const success = check(res, {
     'payment status is 200 or 201': (r) => r.status === 200 || r.status === 201,
@@ -154,10 +157,11 @@ export function testFraudService() {
   
   const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
   const headers  = generateHeaders(tenant);
+  let nameFraud = endpoint.url.includes('/report/') ? `${ENDPOINTS.FRAUD.REPORT}/:id` : ENDPOINTS.FRAUD.CHECK;
   
   const res = endpoint.method === 'GET'
-    ? http.get(endpoint.url, { headers, tags: { tenant, endpoint: 'fraud' } })
-    : http.post(endpoint.url, endpoint.payload, { headers, tags: { tenant, endpoint: 'fraud' } });
+    ? http.get(endpoint.url, { headers, tags: { tenant, endpoint: 'fraud', name: nameFraud } })
+    : http.post(endpoint.url, endpoint.payload, { headers, tags: { tenant, endpoint: 'fraud', name: nameFraud } });
   
   const success = check(res, {
     'fraud status is 200': (r) => r.status === 200,
