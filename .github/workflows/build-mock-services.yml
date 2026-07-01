@@ -25,7 +25,6 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
   detect-changes:
@@ -89,7 +88,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
@@ -105,8 +104,8 @@ jobs:
           context: ./mock-services/payment-gw
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/cdo-07-payment-gw:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/cdo-07-payment-gw:latest
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-payment-gw:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-payment-gw:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -126,7 +125,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
@@ -141,8 +140,8 @@ jobs:
           context: ./mock-services/ledger-svc
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/cdo-07-ledger-svc:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/cdo-07-ledger-svc:latest
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-ledger-svc:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-ledger-svc:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -162,7 +161,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Login to Amazon ECR
@@ -177,8 +176,8 @@ jobs:
           context: ./mock-services/fraud-detection
           push: true
           tags: |
-            ${{ env.ECR_REGISTRY }}/cdo-07-fraud-detection:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/cdo-07-fraud-detection:latest
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-fraud-detection:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/cdo-07-fraud-detection:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -201,7 +200,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Force new deployment (Payment GW)
@@ -247,5 +246,6 @@ jobs:
           # Internal ALB - skip smoke test if not accessible
           echo "ALB DNS: $ALB_DNS"
           echo "⚠️  ALB is internal - smoke test requires VPC access"
+
 
 
