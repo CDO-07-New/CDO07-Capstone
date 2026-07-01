@@ -22,8 +22,8 @@ resource "null_resource" "push_ai_image" {
       $Pass = aws ecr get-login-password --region $Region
       docker login --username AWS --password $Pass $RepoUrl
       docker pull $SourceImage
-      docker tag $SourceImage "$($RepoUrl):latest"
-      docker push "$($RepoUrl):latest"
+      docker tag $SourceImage "$($RepoUrl):v1.0.0"
+      docker push "$($RepoUrl):v1.0.0"
     EOT
   }
 }
