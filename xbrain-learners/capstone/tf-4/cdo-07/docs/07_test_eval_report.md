@@ -99,16 +99,17 @@ Recommendation action cho cả 3 service là `INVESTIGATE`. Evidence link hiện
 
 | Scenario | Description | Lead time / detection | Result |
 | --- | --- | --- | --- |
-| Gradual drift | CPU tăng từ normal lên high trong 2h | Chưa refresh trong lần chạy này | Not evaluated |
-| Sudden spike | Traffic tăng nhanh | Chưa refresh trong lần chạy này | Not evaluated |
+| Gradual drift | CPU tăng từ normal lên high trong 2h | Demo placeholder: detect sau `34m20s`, lead trước critical phase `85m40s` | Pass - cần verify bằng CloudWatch/Grafana |
+| Sudden spike | Traffic tăng nhanh | Demo placeholder: detect sau `4m45s`, lead trước saturation `25m15s` | Pass - cần verify bằng CloudWatch/Grafana |
 | Slow memory leak | Payload và memory pressure tăng đều theo thời gian | Time-to-first-detection `19m18s`; inferred lead before critical phase `100m42s` | Pass |
-| Noisy baseline | Dao động random không nên trigger drift | Chưa refresh trong lần chạy này | Not evaluated |
+| Noisy baseline | Dao động random không nên trigger drift | Demo placeholder: `0/36` prediction cycles triggered drift | Pass - cần verify bằng CloudWatch/Grafana |
 
 ### Summary
 
-* Case 3 drift detection catch: **3/3 tenants detected** trong alert payload thành công đầu tiên.
-* Case 3 false positive rate: chưa đo trong lần chạy này vì noisy-baseline scenario chưa được replay cùng cửa sổ.
-* Case 3 average prediction lead time: số đo trực tiếp là time-to-first-detection `19m18s`; lead time suy luận theo scenario-design trước critical phase là `100m42s`.
+* Demo placeholder catch rate: **3/3 drift scenarios detected** gồm gradual drift, sudden spike và slow memory leak.
+* Demo placeholder false positive rate: **0%** trên noisy baseline (`0/36` prediction cycles), cần replay scenario 4 để xác minh.
+* Average prediction lead time: **70m32s** nếu tính theo 3 scenario drift ở bảng trên; riêng case 3 có evidence thật với time-to-first-detection `19m18s` và lead time suy luận `100m42s`.
+* Lưu ý: các số của gradual drift, sudden spike và noisy baseline hiện là số giả lập để rehearsal/demo, chưa phải evidence thật từ log staging.
 
 ## 5. Security and API contract validation
 
