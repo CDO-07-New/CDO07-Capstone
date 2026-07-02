@@ -103,7 +103,7 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 
 - **Horizontal (ECS Tasks)**: ECS Service Auto Scaling thêm task mới khi CPU > 70% trong 2 phút — AI Engine và Mock Services scale độc lập nhau theo từng ECS Service riêng.
 - **Horizontal (Kinesis)**: Kinesis On-Demand tự động split Shard khi phát hiện Ingress Throughput tăng đột biến, không cần pre-provision.
-- **Fail-Open Trigger**: Nếu AI Engine timeout > 5s hoặc down, Lambda Feeder tự chuyển sang Static Threshold rules: CPU > 30%, Mem > 50%, Conn > 450, Queue > 10k.
+- **Fail-Open Trigger**: Nếu AI Engine timeout > 5s hoặc down, Lambda Feeder tự chuyển sang Static Threshold rules: CPU > 85%, Mem > 90%, Conn > 450, Queue > 10k.
 - **Cost Circuit Breaker**: AWS Budgets theo dõi threshold $165 (80% của $200 cap). Khi chạm $200 breach, Lambda CB tự set SSM flag `inference_enabled = false`, tắt toàn bộ inference ngay lập tức.
 
 ## 7. Failure modes + recovery
