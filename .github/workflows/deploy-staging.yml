@@ -42,6 +42,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -78,6 +80,53 @@ jobs:
           fi
           echo "deploy_ready=true" >> "$GITHUB_OUTPUT"
 
+      - name: Detect AI blue/green deployment scope
+        if: steps.preflight.outputs.deploy_ready == 'true'
+        id: ai_scope
+        shell: bash
+        env:
+          MANUAL_AI_IMAGE_URI: ${{ github.event_name == 'workflow_dispatch' && inputs.ai_image_uri || '' }}
+        run: |
+          set -euo pipefail
+
+          should_deploy=false
+          reason="No AI image publication or AI ECS configuration change detected."
+
+          if [[ "${GITHUB_EVENT_NAME}" == "repository_dispatch" ]]; then
+            should_deploy=true
+            reason="AI repository published a new image via repository_dispatch."
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_AI_IMAGE_URI}" ]]; then
+            should_deploy=true
+            reason="Manual deploy provided an explicit AI image URI."
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            before="${{ github.event.before }}"
+            after="${GITHUB_SHA}"
+            changed_files="${RUNNER_TEMP}/changed-files.txt"
+
+            if [[ "$before" =~ ^0+$ ]]; then
+              git diff-tree --no-commit-id --name-only -r "$after" > "$changed_files"
+            else
+              git diff --name-only "$before" "$after" > "$changed_files"
+            fi
+
+            if grep -E -q "^${PROJECT_DIR}/infra/modules/ecs/ai-engine/|^${PROJECT_DIR}/infra/environments/${ENVIRONMENT}/main\.tf$" "$changed_files"; then
+              should_deploy=true
+              reason="Push changed AI ECS Terraform configuration."
+            fi
+
+            {
+              echo "## Changed files considered for AI blue/green"
+              echo ""
+              echo '```'
+              cat "$changed_files"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "should_deploy=${should_deploy}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+          echo "::notice title=AI blue/green scope::${reason}"
+
       - name: Build window-feeder Lambda package
         if: steps.preflight.outputs.deploy_ready == 'true'
         shell: bash
@@ -97,6 +146,7 @@ jobs:
         shell: bash
         env:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          DEPLOY_AI_BLUE_GREEN: ${{ steps.ai_scope.outputs.should_deploy }}
         run: |
           set -euo pipefail
           manifest="${RUNNER_TEMP}/image-manifest.json"
@@ -127,7 +177,7 @@ jobs:
             mv "${manifest}.tmp" "$manifest"
           done
 
-          if [[ -n "${AI_IMAGE_URI}" ]]; then
+          if [[ "${DEPLOY_AI_BLUE_GREEN}" == "true" && -n "${AI_IMAGE_URI}" ]]; then
             if [[ "${AI_IMAGE_URI}" != *@sha256:* ]]; then
               echo "::error title=Invalid AI image URI::Use an immutable ECR digest URI like repo@sha256:digest."
               exit 1
@@ -139,8 +189,10 @@ jobs:
           elif [[ "${GITHUB_EVENT_NAME}" == "repository_dispatch" ]]; then
             echo "::error title=AI image missing::repository_dispatch must include client_payload.ai_image_uri."
             exit 1
+          elif [[ "${DEPLOY_AI_BLUE_GREEN}" == "true" ]]; then
+            echo "::notice title=AI image missing::AI ECS config changed, but no AI image URI is available. Set STAGING_AI_IMAGE_URI or pass workflow input ai_image_uri to run blue/green."
           else
-            echo "::notice title=AI image missing::Provide workflow input ai_image_uri or repository variable STAGING_AI_IMAGE_URI to deploy the external AI engine image."
+            echo "::notice title=AI blue/green skipped::${{ steps.ai_scope.outputs.reason }}"
           fi
 
           echo "manifest_path=${manifest}" >> "$GITHUB_OUTPUT"
@@ -200,7 +252,7 @@ jobs:
             "$image"
 
       - name: Deploy ai-serving blue/green
-        if: steps.preflight.outputs.deploy_ready == 'true'
+        if: steps.preflight.outputs.deploy_ready == 'true' && steps.ai_scope.outputs.should_deploy == 'true'
         shell: bash
         env:
           ECS_CLUSTER: ${{ env.ENVIRONMENT }}-tf-4-aiops-cluster
