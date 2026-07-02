@@ -252,13 +252,14 @@ async function emitMetrics(operation, latency, riskScore = null, batchSize = nul
   }
 }
 
-// Periodic heartbeat metrics (every 30 seconds)
-setInterval(async () => {
-  await emitMetrics('heartbeat', 0, null, null, SERVICE_NAME);
-}, 30000);
+// Periodic heartbeat metrics disabled to reduce Kinesis costs in mock environment
+// setInterval(async () => {
+//   await emitMetrics('heartbeat', 0, null, null, SERVICE_NAME);
+// }, 30000);
 
 app.listen(PORT, () => {
   console.log(`[${SERVICE_NAME}] Running on port ${PORT}`);
   console.log(`[${SERVICE_NAME}] Kinesis stream: ${KINESIS_STREAM_NAME}`);
   console.log(`[${SERVICE_NAME}] AWS Region: ${AWS_REGION}`);
+  console.log(`[${SERVICE_NAME}] Heartbeat metrics: DISABLED (cost savings)`);
 });

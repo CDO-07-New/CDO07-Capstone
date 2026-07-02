@@ -209,13 +209,14 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
   }
 }
 
-// Periodic heartbeat metrics (every 30 seconds)
-setInterval(async () => {
-  await emitMetrics('heartbeat', 0, SERVICE_NAME);
-}, 30000);
+// Periodic heartbeat metrics disabled to reduce Kinesis costs in mock environment
+// setInterval(async () => {
+//   await emitMetrics('heartbeat', 0, SERVICE_NAME);
+// }, 30000);
 
 app.listen(PORT, () => {
   console.log(`[${SERVICE_NAME}] Running on port ${PORT}`);
   console.log(`[${SERVICE_NAME}] Kinesis stream: ${KINESIS_STREAM_NAME}`);
   console.log(`[${SERVICE_NAME}] AWS Region: ${AWS_REGION}`);
+  console.log(`[${SERVICE_NAME}] Heartbeat metrics: DISABLED (cost savings)`);
 });
