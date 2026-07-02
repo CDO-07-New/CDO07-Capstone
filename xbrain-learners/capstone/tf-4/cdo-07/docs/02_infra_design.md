@@ -4,13 +4,13 @@
 
 ![CDO7 Architecture](images/CDO7.drawio.png)
 
-*Caption: Hệ thống Foresight Lens predictive monitoring với telemetry pipeline từ mock services (Node.js, 3 Tasks) qua Kinesis Data Streams (On-Demand) → Lambda Transformer (PII Drop) → Amazon Timestream for InfluxDB → Lambda Window Feeder (query 2h, call ALB `/v1/predict`, timeout 300s) → AI Engine (ECS Fargate 0.5 vCPU / 1GB RAM). Fail-Open Fallback kích hoạt khi AI timeout/down. Drift alert bắn qua SNS → SNS-to-Slack Lambda → Slack. Giao tiếp nội bộ hoàn toàn qua 8 VPC Endpoints (SSM, SNS, AMG, ECR, CW, TS, S3, KDS), đảm bảo chuẩn Zero-Trust.*
+*Caption: Hệ thống Foresight Lens predictive monitoring với 2 luồng dữ liệu chính: (1) **Ingestion pipeline** — Mock Services (Node.js, 3 Tasks) emit telemetry metric → Kinesis Data Streams (On-Demand) → Lambda Transformer (Schema Whitelist + PII Drop) → Amazon Timestream for InfluxDB; (2) **Inference pipeline** — EventBridge (mỗi 5 phút) trigger Lambda Window Feeder → query Timestream cửa sổ 2h → POST ALB `/v1/predict` → AI Engine (ECS Fargate 0.5 vCPU / 1GB RAM). Fail-Open Fallback kích hoạt khi AI timeout/down, sử dụng ngưỡng tĩnh (CPU>85%, Mem>90%, Conn>450, Queue>10k). Drift alert bắn qua SNS → SNS-to-Slack Lambda → Slack. Managed Grafana query Timestream trực tiếp qua Timestream Plugin và hiển thị Annotation overlay từ dự đoán AI. Giao tiếp nội bộ hoàn toàn qua 8 VPC Endpoints (SSM, SNS, AMG, ECR, CW, TS, S3, KDS), đảm bảo chuẩn Zero-Trust.*
 
 ## 2. Component table
 
 | Component | AWS Service | Reason | Cost note |
 |---|---|---|---|
-| **Compute** | ECS Fargate | AI Engine (0.5 vCPU / 1GB RAM) + 3 Mock Services (mỗi service 0.5 vCPU / 0.5GB), Path-based routing qua Internal ALB | $44.43 |
+| **Compute** | ECS Fargate | AI Engine (0.5 vCPU / 1GB RAM) + 3 Mock Services (mỗi service 0.5 vCPU / 0.5GB RAM), chạy 24/7 — 730h/tháng. vCPU: 4×0.5×$0.04048×730=$59.10; Mem: 2.5GB×$0.004445×730=$8.12 | **$67.22** |
 | **API entry** | Application Load Balancer | Path-based routing (`/v1/predict` → AI Engine, `/*` → Mock Services), health checks, 1 ALB (Internal) | $21.96 |
 | **Database** | Amazon Timestream for InfluxDB | db.influx.medium Single-AZ, 300GB provisioned storage, 1 Org · 1 Bucket `service-metrics`, query qua InfluxQL/Flux | $116.40 |
 | **Storage** | S3 Standard + S3 Glacier | ML baselines (α, β, γ params), audit logs (**KMS Encrypted at rest**), Lifecycle policy 90 days | $0.79 |
@@ -22,7 +22,7 @@
 | **Networking** | VPC Endpoints (8 endpoints) | 7 Interface (SSM, SNS, AMG, ECR, CW, TS, KDS) + 1 S3 Gateway — Zero-Trust, không cần IGW/NAT | $50.40 |
 | **Notifications** | SNS → SNS-to-Slack Lambda | Drift alert (5-part recommendation block) → Slack Alert Webhook | $0.01 |
 | **Cost Control** | AWS Budgets + SSM Parameter Store | Budget threshold $165 (80%), Lambda CB tự ngắt SSM flag `inference_enabled` khi $200 breach | $0.00 |
-| **Total (Run-rate 1 tháng)** | | | **~$282.59** |
+| **Total (Run-rate 1 tháng)** | | | **~$305.38** |
 
 ## 3. Differentiation angle deep-dive
 
@@ -39,7 +39,7 @@ Kiến trúc này tỏa sáng khi được đo lường dưới lăng kính Tố
 
 | Trục đo lường (Axis) | Chỉ số kiến trúc CDO-07 | Giải pháp truyền thống (Self-Hosted) |
 |---|---|---|
-| **Ngân sách vận hành ($200 Cap)** | **Hoàn toàn tuân thủ.** Run-rate lý thuyết ~$290/tháng, nhưng nhờ Kinesis On-Demand, tổng chi phí thực tế cho 2 tuần kiểm thử nằm an toàn dưới $145. | Khó kiểm soát, dễ lố ngân sách do chi phí chìm từ EC2/EBS. |
+| **Ngân sách vận hành ($200 Cap)** | **Hoàn toàn tuân thủ.** Run-rate lý thuyết ~$305.38/tháng, nhưng nhờ Kinesis On-Demand chỉ tính theo lưu lượng thực tế, tổng chi phí thực tế cho 2 tuần kiểm thử nằm an toàn dưới $165. | Khó kiểm soát, dễ lố ngân sách do chi phí chìm từ EC2/EBS. |
 | **Ops overhead (Giờ/tuần)** | **0 giờ** (Fully Managed Services) | 8-12 giờ (OS patching, DB scaling) |
 | **Đáp ứng Lead time $\ge$ 15 phút** | **Có.** Kiến trúc hỗ trợ query trực tiếp cửa sổ 2h với độ trễ thấp thông qua VPC Endpoints nội bộ. | Data pipeline chậm, khó đáp ứng realtime. |
 | **Bảo mật mạng (Network Isolation)** | **100% Zero-Trust.** Không dùng Internet Gateway/NAT, mọi luồng dữ liệu đều bọc trong PrivateLink. | Dễ rò rỉ dữ liệu qua Public IP hoặc NAT kém bảo mật. |
@@ -47,7 +47,7 @@ Kiến trúc này tỏa sáng khi được đo lường dưới lăng kính Tố
 ### 3.3 Calculated Trade-offs (Đánh đổi có chủ đích)
 Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 - **VPC Endpoints Premium vs. Security:** Việc trang bị đầy đủ 8 VPC Endpoints đẩy chi phí mạng lên mức ~$50.40/tháng. Tuy nhiên, trong bối cảnh dữ liệu tài chính (Fintech), nhóm chấp nhận trade-off này để tuân thủ tiêu chuẩn SOC2 (không truyền tải dữ liệu đo lường và Audit Log qua Internet).
-- **Single-Region Resilience:** Thiết kế tuân thủ yêu cầu Out of Scope của Client là chỉ triển khai Single Region. Rủi ro sập Region được bù đắp một phần bằng Multi-AZ của các dịch vụ Managed (ALB, Fargate, Timestream), đảm bảo mục tiêu SLA Demo-quality 99.5%.
+- **Single-Region Resilience:** Thiết kế tuân thủ yêu cầu Out of Scope của Client là chỉ triển khai Single Region. Timestream for InfluxDB được chọn cấu hình **Single-AZ** để kiểm soát chi phí, rủi ro sập Region được bù đắp bằng Kinesis 24h buffer retention và ECS Fargate task auto-restart, đảm bảo mục tiêu SLA Demo-quality 99.5%.
 
 ## 4. Multi-tenant approach
 
@@ -76,7 +76,7 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 
 ### 4.4 Noisy neighbor mitigation
 
-- **Per-tenant quota**: Kinesis partition key = `service_id` → tự động định tuyến và Auto-scale Shard cục bộ theo lưu lượng của từng Tenant.
+- **Per-tenant quota**: Kinesis partition key = `tenant_id` → tự động định tuyến và Auto-scale Shard cục bộ theo lưu lượng của từng Tenant.
 - **Resource reservation**: AI Engine có Rate Limit ở Middleware (600 req/min/tenant) theo đúng API Contract.
 - **Audit isolation**: S3 audit logs được phân vùng theo date path `s3://audit-logs/{year}/{month}/{day}/` với prediction_id filename (KMS Encrypted).
 
@@ -86,12 +86,12 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 
 - **Option A**: Lambda + API Gateway - Ưu điểm: chi phí theo invoke, auto-scaling. Nhược điểm: cold start 5-10s với ML libraries, **giới hạn 15 phút không đáp ứng test window ≥ 2h requirement.**
 - **Option B**: EKS + Kubernetes - Ưu điểm: container orchestration, linh hoạt. Nhược điểm: **overhead quản lý cluster vi phạm zero-ops, chi phí cao hơn vượt demo budget.**
-- ✅ **Đã chọn**: ECS Fargate + Internal ALB - Lý do: **Long-running support cho test window ≥ 2h, latency dự đoán được < 200ms cho lead time ≥ 15min**, không cần quản lý hệ điều hành. Dùng k6 kết hợp SSM Port Forwarding để test an toàn.
+- ✅ **Đã chọn**: ECS Fargate + Internal ALB - Lý do: **Long-running support cho test window ≥ 2h, latency dự đoán được < 200ms cho lead time ≥ 15min**, không cần quản lý hệ điều hành. k6 bắn lưu lượng trực tiếp qua ALB endpoint công khai, an toàn nhờ Security Group chỉ cho phép IP của k6 runner.
 
 ### 5.2 Database
 
 - **Option A**: Self-managed Prometheus hoặc InfluxDB OSS trên EC2 - Ưu điểm: open source, không phí license. Nhược điểm: **ops overhead vi phạm zero-ops requirement**, rủi ro sập DB cao, phát sinh chi phí duy trì EBS và EC2 liên tục.
-- ✅ **Đã chọn**: Amazon Timestream for InfluxDB - Lý do: **Zero-ops managed service**, nguyên bản trong AWS, gọi qua VPC Endpoints bảo mật, dùng ngôn ngữ InfluxQL/Flux thân thuộc, tương thích hoàn hảo với Grafana Annotations. Hỗ trợ ghi lô qua Firehose HTTP Endpoint.
+- ✅ **Đã chọn**: Amazon Timestream for InfluxDB - Lý do: **Zero-ops managed service**, nguyên bản trong AWS, gọi qua VPC Endpoints bảo mật, dùng ngôn ngữ InfluxQL/Flux thân thuộc, tương thích hoàn hảo với Grafana Annotations. Lambda Transformer ghi trực tiếp qua Timestream InfluxDB write API (không cần Firehose).
 
 ### 5.3 Event streaming
 
@@ -101,8 +101,8 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 
 ## 6. Scaling strategy
 
-- **Vertical**: ECS auto-scaling CPU > 70% trong 2 phút → khởi chạy task bổ sung (AI Engine scale độc lập với Mock Services).
-- **Horizontal**: Kinesis On-Demand tự động split Shard khi phát hiện Ingress Throughput tăng đột biến, không cần pre-provision.
+- **Horizontal (ECS Tasks)**: ECS Service Auto Scaling thêm task mới khi CPU > 70% trong 2 phút — AI Engine và Mock Services scale độc lập nhau theo từng ECS Service riêng.
+- **Horizontal (Kinesis)**: Kinesis On-Demand tự động split Shard khi phát hiện Ingress Throughput tăng đột biến, không cần pre-provision.
 - **Fail-Open Trigger**: Nếu AI Engine timeout > 5s hoặc down, Lambda Feeder tự chuyển sang Static Threshold rules: CPU > 30%, Mem > 50%, Conn > 450, Queue > 10k.
 - **Cost Circuit Breaker**: AWS Budgets theo dõi threshold $165 (80% của $200 cap). Khi chạm $200 breach, Lambda CB tự set SSM flag `inference_enabled = false`, tắt toàn bộ inference ngay lập tức.
 
@@ -111,7 +111,7 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 | Failure | Detection | Recovery | RTO | RPO |
 |---|---|---|---|---|
 | AI Engine crash | ALB health check fail 3 lần | ECS auto-restart task mới | <30s | 0 |
-| AI timeout > 5.0s | Lambda Feeder request timeout | **Fail-Open sang Static Rules: CPU>85%, Mem>90%, Conn>450, Queue>10k** | **<1s** | 0 |
+| AI timeout > 5.0s | Lambda Feeder request timeout | **Fail-Open sang Static Rules: CPU>30%, Mem>50%, Conn>450, Queue>10k** | **<1s** | 0 |
 | Metric thủng/Rớt mạng | Lambda Feeder check mảng trống | **Tự động Forward-fill lấp lỗ hổng (Imputation)** | <1s | 0 |
 | Kinesis/Timestream outage | Lambda delivery errors | Kinesis 24h buffer retention → retry tự động | Auto | 0 |
 | Budget chạm $165 (80%) | AWS Budgets alert | Lambda Circuit Breaker push annotation Grafana, cảnh báo Slack | <5s | 0 |
@@ -122,5 +122,5 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 - [`01_requirements_analysis.md`](01_requirements_analysis.md) - Business requirements mapping tới technical components
 - [`03_security_design.md`](03_security_design.md) - Network Security + IAM + PII firewall expand on infra concerns
 - [`04_deployment_design.md`](04_deployment_design.md) - IaC Terraform + CI/CD GitOps cho infra này
-- [`05_cost_analysis.md`](05_cost_analysis.md) - Per-service cost model ~$290.11/tháng breakdown chi tiết
+- [`05_cost_analysis.md`](05_cost_analysis.md) - Per-service cost model **~$305.38/tháng** breakdown chi tiết
 - [`08_adrs.md`](08_adrs.md) - Infra architecture decisions (ADR-001 to ADR-005)
