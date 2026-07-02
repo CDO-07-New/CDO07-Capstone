@@ -4,26 +4,25 @@
 
 ![CDO7 Architecture](images/CDO7.drawio.png)
 
-*Caption: Hệ thống Foresight Lens predictive monitoring với telemetry pipeline từ mock services qua Kinesis Data Streams (On-Demand) đến Timestream for InfluxDB, AI inference engine chạy trên ECS Fargate, và dashboard tích hợp Grafana annotations. Giao tiếp nội bộ hoàn toàn qua VPC Endpoints, đảm bảo chuẩn Zero-Trust.*
+*Caption: Hệ thống Foresight Lens predictive monitoring với telemetry pipeline từ mock services (Node.js, 3 Tasks) qua Kinesis Data Streams (On-Demand) → Lambda Transformer (PII Drop) → Amazon Timestream for InfluxDB → Lambda Window Feeder (query 2h, call ALB `/v1/predict`, timeout 300s) → AI Engine (ECS Fargate 0.5 vCPU / 1GB RAM). Fail-Open Fallback kích hoạt khi AI timeout/down. Drift alert bắn qua SNS → SNS-to-Slack Lambda → Slack. Giao tiếp nội bộ hoàn toàn qua 8 VPC Endpoints (SSM, SNS, AMG, ECR, CW, TS, S3, KDS), đảm bảo chuẩn Zero-Trust.*
 
 ## 2. Component table
 
 | Component | AWS Service | Reason | Cost note |
 |---|---|---|---|
-| **Compute** | ECS Fargate | AI inference engine + 3 mock services, 900 vCPU-hour + 1,800 GB-hour | $44.43 |
-| **API entry** | Application Load Balancer | Định tuyến requests, health checks, 1 ALB (Internal) + 1 LCU average | $21.96 |
-| **Database** | Amazon Timestream for InfluxDB | db.influx.medium Single-AZ, 300GB provisioned storage, time-series optimized | $116.40 |
-| **Storage** | S3 Standard + Glacier | ML baselines, audit logs (**KMS Encrypted at rest**), 10GB Std + 5GB Glacier | $0.79 |
-| **Event Streaming** | Kinesis Data Streams (On-Demand) | Stream processing, tự động co giãn shard, Noisy-neighbor mitigation | ~$28.50 |
-| **Stream Delivery** | Kinesis Data Firehose | Delivery pipeline qua HTTP Endpoint, tích hợp Lambda PII Drop | $7.52 |
-| **Observability** | Amazon Managed Grafana | Dashboard visualization, 1 active editor/admin user | $9.00 |
-| **Functions** | Lambda + EventBridge | Window feeder (có Forward-fill logic), transformer, circuit breaker | $4.50 |
-| **Container Registry** | Amazon ECR | Container image storage cho ECS services, 5GB storage | $0.50 |
+| **Compute** | ECS Fargate | AI Engine (0.5 vCPU / 1GB RAM) + 3 Mock Services (mỗi service 0.5 vCPU / 0.5GB), Path-based routing qua Internal ALB | $44.43 |
+| **API entry** | Application Load Balancer | Path-based routing (`/v1/predict` → AI Engine, `/*` → Mock Services), health checks, 1 ALB (Internal) | $21.96 |
+| **Database** | Amazon Timestream for InfluxDB | db.influx.medium Single-AZ, 300GB provisioned storage, 1 Org · 1 Bucket `service-metrics`, query qua InfluxQL/Flux | $116.40 |
+| **Storage** | S3 Standard + S3 Glacier | ML baselines (α, β, γ params), audit logs (**KMS Encrypted at rest**), Lifecycle policy 90 days | $0.79 |
+| **Event Streaming** | Kinesis Data Streams (On-Demand) | Ingestion layer + PII Firewall, emit metric từ 3 services → Lambda Transformer, Noisy-neighbor mitigation qua `service_id` partition key | ~$28.50 |
+| **Observability** | Amazon Managed Grafana | Timestream Plugin direct query, Annotation overlay từ AI predictions, 1 active editor/admin user | $9.00 |
+| **Functions** | Lambda + EventBridge | Window Feeder (query 2h InfluxDB, call ALB `/v1/predict`, timeout 300s) + Transformer (Schema Whitelist, PII Drop) + Circuit Breaker (set SSM = false) | $4.50 |
+| **Container Registry** | Amazon ECR | Container image storage cho ECS services (AI Engine + 3 mocks), 5GB storage | $0.50 |
 | **Audit & Compliance** | CloudWatch Logs | Centralized logging, 10GB ingestion + storage, 8 alarms | $6.10 |
-| **Networking** | VPC Endpoints (8 endpoints) | 7 Interface (ECR, CW, TS, KDS, SSM, SNS, AMG) + 1 S3 Gateway | $50.40 |
-| **Notifications** | SNS | Bắn Drift alert (5-part recommendation block) tới Slack webhook | $0.01 |
-| **Cost Control** | AWS Budgets + Parameter Store | Budget thresholds, inference control flags | $0.00 |
-| **Total (Run-rate 1 tháng)** | | | **~$290.11** |
+| **Networking** | VPC Endpoints (8 endpoints) | 7 Interface (SSM, SNS, AMG, ECR, CW, TS, KDS) + 1 S3 Gateway — Zero-Trust, không cần IGW/NAT | $50.40 |
+| **Notifications** | SNS → SNS-to-Slack Lambda | Drift alert (5-part recommendation block) → Slack Alert Webhook | $0.01 |
+| **Cost Control** | AWS Budgets + SSM Parameter Store | Budget threshold $165 (80%), Lambda CB tự ngắt SSM flag `inference_enabled` khi $200 breach | $0.00 |
+| **Total (Run-rate 1 tháng)** | | | **~$282.59** |
 
 ## 3. Differentiation angle deep-dive
 
@@ -54,8 +53,8 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 
 ### 4.1 Tenant model
 
-- **Tenant ID format**: `service_id` (payment-gateway, ledger-service, fraud-detection)
-- **Header**: `service_id`, `tenant_id`, `metric_type` mandatory trong Kinesis payload
+- **Tenant ID format**: `tenant_id` = service name (`payment-gw`, `ledger-svc`, `fraud-detection`) — bắt buộc trong header `x-tenant-id` và Kinesis payload
+- **Payload fields bắt buộc**: `ts`, `tenant_id`, `service_id`, `metric_type`, `value` — theo Telemetry Contract §Schema
 - **Subscription tiers**: All 3 services Tier-1 (per-service baseline models, 5-min prediction intervals)
 
 ### 4.2 Isolation pattern
@@ -102,19 +101,21 @@ Một kiến trúc chuẩn Enterprise luôn đi kèm sự đánh đổi:
 
 ## 6. Scaling strategy
 
-- **Vertical**: ECS auto-scaling CPU > 70% trong 2 phút → khởi chạy task bổ sung.
-- **Horizontal**: Kinesis On-Demand tự động split Shard khi phát hiện Ingress Throughput tăng đột biến.
-- **Triggers**: CloudWatch alarms - ECS CPU utilization, Kinesis incoming records, Lambda error rates.
+- **Vertical**: ECS auto-scaling CPU > 70% trong 2 phút → khởi chạy task bổ sung (AI Engine scale độc lập với Mock Services).
+- **Horizontal**: Kinesis On-Demand tự động split Shard khi phát hiện Ingress Throughput tăng đột biến, không cần pre-provision.
+- **Fail-Open Trigger**: Nếu AI Engine timeout > 5s hoặc down, Lambda Feeder tự chuyển sang Static Threshold rules: CPU > 30%, Mem > 50%, Conn > 450, Queue > 10k.
+- **Cost Circuit Breaker**: AWS Budgets theo dõi threshold $165 (80% của $200 cap). Khi chạm $200 breach, Lambda CB tự set SSM flag `inference_enabled = false`, tắt toàn bộ inference ngay lập tức.
 
 ## 7. Failure modes + recovery
 
 | Failure | Detection | Recovery | RTO | RPO |
 |---|---|---|---|---|
 | AI Engine crash | ALB health check fail 3 lần | ECS auto-restart task mới | <30s | 0 |
-| AI timeout > 5.0s | Request timeout exception | **Bẻ lái Fail-open sang Rule-based (Lambda)** | **<1s** | 0 |
-| Metric thủng/Rớt mạng | Lambda Feeder check mảng | **Tự động Forward-fill lấp lỗ hổng (Imputation)** | <1s | 0 |
-| Timestream outage | Firehose delivery errors | Kinesis 24h buffer retention | Auto | 0 |
-| Budget chạm $180 | AWS Budgets alert | Lambda Circuit Breaker tự ngắt SSM Flag | <5s | 0 |
+| AI timeout > 5.0s | Lambda Feeder request timeout | **Fail-Open sang Static Rules: CPU>85%, Mem>90%, Conn>450, Queue>10k** | **<1s** | 0 |
+| Metric thủng/Rớt mạng | Lambda Feeder check mảng trống | **Tự động Forward-fill lấp lỗ hổng (Imputation)** | <1s | 0 |
+| Kinesis/Timestream outage | Lambda delivery errors | Kinesis 24h buffer retention → retry tự động | Auto | 0 |
+| Budget chạm $165 (80%) | AWS Budgets alert | Lambda Circuit Breaker push annotation Grafana, cảnh báo Slack | <5s | 0 |
+| Budget chạm $200 (100%) | AWS Budgets alert | Lambda CB set SSM `inference_enabled = false` → ngắt toàn bộ inference | <5s | 0 |
 
 ## Related documents
 

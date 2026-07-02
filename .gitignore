@@ -1,0 +1,45 @@
+# Local deployment guides and internal docs (not for public repo)
+*.local.md
+*LOCAL*.md
+*INTERNAL*.md
+
+# K6 test results
+k6-tests/results/*.json
+k6-tests/results/*.csv
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# AWS credentials
+*.pem
+*.key
+credentials
+.aws/
+
+# Environment files
+.env
+.env.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Node modules
+node_modules/
