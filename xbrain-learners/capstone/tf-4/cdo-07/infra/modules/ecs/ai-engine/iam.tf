@@ -87,7 +87,7 @@ resource "aws_iam_policy" "task" {
         Sid      = "WriteAuditLogs"
         Effect   = "Allow"
         Action   = ["s3:PutObject"]
-        Resource = ["${var.audit_s3_bucket_arn}/ai-engine/*"]
+        Resource = ["${var.audit_s3_bucket_arn}/audit/*"]
       },
       # CloudWatch: Custom metrics (02_infra_design §6)
       {

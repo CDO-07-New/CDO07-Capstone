@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 
 import boto3
 from botocore.config import Config
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 logger = logging.getLogger()
@@ -27,7 +29,8 @@ INFLUXDB_SECRET_ARN = os.environ.get("INFLUXDB_SECRET_ARN")
 INFLUXDB_QUERY_WINDOW = os.environ.get("INFLUXDB_QUERY_WINDOW")
 METRIC_WINDOW_STEP_SECONDS = int(os.environ.get("METRIC_WINDOW_STEP_SECONDS", "300"))
 FORWARD_FILL_LOOKBACK_SECONDS = int(os.environ.get("FORWARD_FILL_LOOKBACK_SECONDS", "900"))
-AI_ENGINE_PREDICT_URL = os.environ.get("AI_ENGINE_PREDICT_URL")
+ALB_PRIVATE_IPS = os.environ.get("ALB_PRIVATE_IPS")
+ALB_DNS_NAME = os.environ.get("ALB_DNS_NAME")
 AI_ENGINE_TIMEOUT_SECONDS = int(os.environ.get("AI_ENGINE_TIMEOUT_SECONDS", "5"))
 DEPLOYMENT_VERSION = os.environ.get("DEPLOYMENT_VERSION")
 INFERENCE_ENABLED_PARAMETER_NAME = os.environ.get("INFERENCE_ENABLED_PARAMETER_NAME")
@@ -53,7 +56,7 @@ def load_config():
     global REGION
     global INFLUXDB_URL, INFLUXDB_BUCKET, INFLUXDB_ORG, INFLUXDB_SECRET_ARN, INFLUXDB_QUERY_WINDOW
     global METRIC_WINDOW_STEP_SECONDS, FORWARD_FILL_LOOKBACK_SECONDS
-    global AI_ENGINE_PREDICT_URL, AI_ENGINE_TIMEOUT_SECONDS, DEPLOYMENT_VERSION
+    global ALB_PRIVATE_IPS, ALB_DNS_NAME, AI_ENGINE_TIMEOUT_SECONDS, DEPLOYMENT_VERSION
     global INFERENCE_ENABLED_PARAMETER_NAME, DRIFT_ALERT_SNS_TOPIC_ARN
 
     required = [
@@ -65,7 +68,8 @@ def load_config():
         "INFLUXDB_QUERY_WINDOW",
         "METRIC_WINDOW_STEP_SECONDS",
         "FORWARD_FILL_LOOKBACK_SECONDS",
-        "AI_ENGINE_PREDICT_URL",
+        "ALB_PRIVATE_IPS",
+        "ALB_DNS_NAME",
         "AI_ENGINE_TIMEOUT_SECONDS",
         "DEPLOYMENT_VERSION",
         "INFERENCE_ENABLED_PARAMETER_NAME",
@@ -83,7 +87,8 @@ def load_config():
     INFLUXDB_QUERY_WINDOW = os.environ["INFLUXDB_QUERY_WINDOW"]
     METRIC_WINDOW_STEP_SECONDS = int(os.environ["METRIC_WINDOW_STEP_SECONDS"])
     FORWARD_FILL_LOOKBACK_SECONDS = int(os.environ["FORWARD_FILL_LOOKBACK_SECONDS"])
-    AI_ENGINE_PREDICT_URL = os.environ["AI_ENGINE_PREDICT_URL"]
+    ALB_PRIVATE_IPS = os.environ["ALB_PRIVATE_IPS"]
+    ALB_DNS_NAME = os.environ["ALB_DNS_NAME"]
     AI_ENGINE_TIMEOUT_SECONDS = int(os.environ["AI_ENGINE_TIMEOUT_SECONDS"])
     DEPLOYMENT_VERSION = os.environ["DEPLOYMENT_VERSION"]
     INFERENCE_ENABLED_PARAMETER_NAME = os.environ["INFERENCE_ENABLED_PARAMETER_NAME"]
@@ -95,7 +100,7 @@ def is_inference_enabled() -> bool:
     load_config()
     try:
         logger.info("Checking SSM parameter: %s", INFERENCE_ENABLED_PARAMETER_NAME)
-        parameter = ssm_client.get_parameter(Name=INFERENCE_ENABLED_PARAMETER_NAME)
+        parameter = ssm_client.get_parameter(Name=INFERENCE_ENABLED_PARAMETER_NAME, WithDecryption=True)
         is_enabled = parameter["Parameter"]["Value"].lower() == "true"
         logger.info("Inference enabled status: %s", is_enabled)
         return is_enabled
@@ -327,6 +332,7 @@ def query_influxdb_metrics(window: str | None = None) -> dict:
         from(bucket: "{_escape_flux_string(INFLUXDB_BUCKET)}")
           |> range(start: -{query_window_with_lookback})
           |> filter(fn: (r) => r._field == "value")
+          |> aggregateWindow(every: {METRIC_WINDOW_STEP_SECONDS}s, fn: mean, createEmpty: false)
           |> keep(columns: ["_time", "_measurement", "_field", "_value", "service_id", "tenant_id"])
           |> sort(columns: ["_time"])
     '''
@@ -430,10 +436,19 @@ def build_ai_predict_requests(metrics_data: dict) -> list[dict]:
     return requests_to_send
 
 
-def invoke_ai_engine(metrics_data: dict) -> dict:
-    """Post the prepared metric window to AI Engine /v1/predict."""
+def invoke_ai_engine(metrics_data: dict, predict_path: str = "/v1/predict") -> dict:
+    """Post the prepared metric window to AI Engine directly via ALB internal IPs."""
+    import random
     load_config()
-    logger.info("Invoking AI Engine at: %s", AI_ENGINE_PREDICT_URL)
+    
+    ips = [ip.strip() for ip in ALB_PRIVATE_IPS.split(",") if ip.strip()]
+    if not ips:
+        raise RuntimeError("No private IPs available for the AI Engine ALB")
+    
+    target_ip = random.choice(ips)
+    target_url = f"http://{target_ip}{predict_path}"
+    
+    logger.info("Invoking AI Engine at internal IP: %s (Host: %s)", target_url, ALB_DNS_NAME)
     predict_requests = build_ai_predict_requests(metrics_data)
     responses = []
 
@@ -442,20 +457,26 @@ def invoke_ai_engine(metrics_data: dict) -> dict:
             body = json.dumps(predict_request["payload"], separators=(",", ":"))
             headers = {
                 "Content-Type": "application/json",
+                "Host": ALB_DNS_NAME,
                 "X-Tenant-Id": predict_request["tenant_id"],
                 "X-Correlation-Id": predict_request["correlation_id"],
             }
+            
             request = urllib.request.Request(
-                AI_ENGINE_PREDICT_URL,
+                target_url,
                 data=body.encode("utf-8"),
                 method="POST",
                 headers=headers,
             )
 
-            with urllib.request.urlopen(request, timeout=AI_ENGINE_TIMEOUT_SECONDS) as response:
-                status_code = response.getcode()
-                response_body = response.read().decode("utf-8")
-
+            try:
+                with urllib.request.urlopen(request, timeout=AI_ENGINE_TIMEOUT_SECONDS) as response:
+                    status_code = response.getcode()
+                    response_body = response.read().decode("utf-8")
+            except urllib.error.HTTPError as e:
+                error_body = e.read().decode("utf-8")
+                logger.error("AI Engine returned %s: %s", e.code, error_body)
+                raise
             logger.info("AI Engine responded with status %s for tenant %s", status_code, predict_request["tenant_id"])
             ai_response = json.loads(response_body)
             ai_response.setdefault("tenant_id", predict_request["tenant_id"])

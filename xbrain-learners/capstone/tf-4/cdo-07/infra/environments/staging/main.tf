@@ -254,7 +254,7 @@ module "window_feeder" {
     INFLUXDB_ORG                     = module.audit_s3.influxdb_org
     INFLUXDB_SECRET_ARN              = module.audit_s3.influxdb_secret_arn
     INFLUXDB_QUERY_WINDOW            = "2h"
-    METRIC_WINDOW_STEP_SECONDS       = "300"
+    METRIC_WINDOW_STEP_SECONDS       = "60"
     FORWARD_FILL_LOOKBACK_SECONDS    = "900"
     ALB_DNS_NAME                     = module.networking.alb_dns_name
     ALB_PRIVATE_IPS                  = join(",", [for eni in data.aws_network_interface.alb_enis : eni.private_ip])
