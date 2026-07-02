@@ -22,12 +22,15 @@ const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 // Initialize Kinesis client
 const kinesis = new AWS.Kinesis({ region: AWS_REGION });
 
-// Request rate counter for dynamic metric simulation
+// Request rate counter with 3-second moving average for stable metric simulation
 let requestCounter = 0;
+let rpsHistory = [0, 0, 0];
 let currentRps = 0;
 setInterval(() => {
-  currentRps = requestCounter;
+  rpsHistory.push(requestCounter);
+  rpsHistory.shift();
   requestCounter = 0;
+  currentRps = rpsHistory.reduce((a, b) => a + b, 0) / 3;
 }, 1000);
 
 // Middleware
@@ -164,7 +167,7 @@ async function emitMetrics(operation, latency, tenantId = 'tier-1') {
       // Simulate CPU load based on request throughput (RPS):
       // baseline (20 RPS total) -> cpu ~ 35-50%
       // spike (100+ RPS total) -> cpu ~ 80-100%
-      value: Math.min(100, Math.max(15, 20 + (currentRps * 1.0) + Math.random() * 10)),
+      value: Math.min(100, Math.max(15, 20 + (currentRps * 0.7) + Math.random() * 10)),
       labels: { operation }
     },
     {
