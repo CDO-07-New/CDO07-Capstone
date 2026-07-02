@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CDO-07 · Foresight Lens — Capstone Presentation</title>
+<meta name="description" content="Foresight Lens — Predictive Monitoring Platform for Fintech. CDO-07 Task Force 4 Capstone Presentation." />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --brand-primary: #0f172a;
+  --brand-accent: #f59e0b;
+  --brand-accent-2: #fb923c;
+  --brand-secondary: #3b82f6;
+  --brand-purple: #8b5cf6;
+  --brand-danger: #ef4444;
+  --brand-success: #22c55e;
+  --text-primary: #1e293b;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --border: #e2e8f0;
+  --surface-dark: #ffffff;
+  --surface-card: #f8fafc;
+  --gradient-warm: linear-gradient(135deg, #f59e0b, #ef4444);
+  --gradient-blue: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  --gradient-green: linear-gradient(135deg, #22c55e, #14b8a6);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-snap-type: y mandatory; scroll-behavior: smooth; overflow-x: hidden; }
+body { font-family: 'Plus Jakarta Sans', sans-serif; background: var(--surface-dark); color: var(--text-primary); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+.slide {
+  min-height: 100vh; width: 100%; scroll-snap-align: start; scroll-snap-stop: always;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  padding: clamp(32px, 5vh, 80px) clamp(24px, 5vw, 120px); position: relative; overflow: hidden;
+}
+.slide-title { background: var(--surface-dark); text-align: center; }
+.slide-title::before { content: ''; position: absolute; top: -30%; right: -20%; width: 60%; height: 80%; background: radial-gradient(circle, rgba(245,158,11,0.12) 0%, transparent 70%); pointer-events: none; }
+.slide-title::after { content: ''; position: absolute; bottom: -20%; left: -15%; width: 50%; height: 60%; background: radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%); pointer-events: none; }
+.slide-title h1 { font-size: clamp(2.2rem, 5vw, 4rem); font-weight: 800; line-height: 1.1; letter-spacing: -0.03em; margin-bottom: 16px; }
+.slide-title .lead { font-size: clamp(1rem, 2vw, 1.3rem); color: var(--text-secondary); max-width: 760px; }
+.gradient-text { background: var(--gradient-warm); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.gradient-text-blue { background: var(--gradient-blue); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.gradient-text-green { background: var(--gradient-green); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.slide-divider { background: var(--surface-dark); text-align: center; }
+.slide-divider::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(245,158,11,0.06) 0%, transparent 60%); pointer-events: none; }
+.section-number { font-family: 'JetBrains Mono', monospace; font-size: clamp(5rem, 12vw, 10rem); font-weight: 700; -webkit-text-stroke: 2px rgba(245,158,11,0.2); color: transparent; line-height: 1; margin-bottom: -20px; }
+.section-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: var(--brand-accent); margin-bottom: 8px; }
+.slide-divider h2 { font-size: clamp(1.8rem, 4vw, 3rem); font-weight: 800; line-height: 1.15; letter-spacing: -0.02em; }
+.slide-divider .lead { font-size: clamp(0.95rem, 1.5vw, 1.15rem); color: var(--text-secondary); margin-top: 12px; max-width: 640px; }
+.slide-content { width: 100%; max-width: 1100px; }
+.slide-header { margin-bottom: clamp(20px, 3vh, 40px); }
+.slide-header h2 { font-size: clamp(1.5rem, 3vw, 2.2rem); font-weight: 800; line-height: 1.15; letter-spacing: -0.02em; }
+.slide-header .lead { font-size: clamp(0.85rem, 1.2vw, 1rem); color: var(--text-secondary); margin-top: 6px; }
+.slide-footer { position: absolute; bottom: 20px; left: 40px; right: 40px; display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.eyebrow { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--brand-accent); margin-bottom: 8px; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; }
+.badge-accent { background: rgba(245,158,11,0.15); color: var(--brand-accent); }
+.badge-blue { background: rgba(59,130,246,0.15); color: var(--brand-secondary); }
+.badge-purple { background: rgba(139,92,246,0.15); color: var(--brand-purple); }
+.badge-danger { background: rgba(239,68,68,0.15); color: var(--brand-danger); }
+.badge-success { background: rgba(34,197,94,0.15); color: var(--brand-success); }
+.grid { display: grid; gap: clamp(12px, 2vw, 20px); }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+.card { background: var(--surface-card); border: 1px solid var(--border); border-radius: 12px; padding: clamp(16px, 2vw, 24px); transition: transform 0.3s var(--ease-out); }
+.card:hover { transform: translateY(-2px); }
+.card h3 { font-size: clamp(0.9rem, 1.3vw, 1.1rem); font-weight: 700; margin-bottom: 8px; }
+.card p, .card li { font-size: clamp(0.8rem, 1vw, 0.9rem); color: var(--text-secondary); line-height: 1.5; }
+.card-dark { background: var(--brand-primary); border-color: rgba(245,158,11,0.2); color:#e2e8f0; }
+.card-dark h3 { color:#fff; }
+.card-dark p { color: #94a3b8; }
+.card-accent { background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(251,146,60,0.05)); border-color: rgba(245,158,11,0.3); }
+.card-accent h3 { color: var(--brand-accent); }
+.card-blue { background: linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.05)); border-color: rgba(59,130,246,0.25); }
+.card-blue h3 { color: var(--brand-secondary); }
+.card-success { background: linear-gradient(135deg, rgba(34,197,94,0.08), rgba(20,184,166,0.05)); border-color: rgba(34,197,94,0.25); }
+.card-success h3 { color: var(--brand-success); }
+.card-number { font-family: 'JetBrains Mono', monospace; font-size: clamp(2rem, 4vw, 3.5rem); font-weight: 700; color: var(--brand-accent); line-height: 1; }
+.card-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+.flow { display: flex; align-items: center; gap: 0; flex-wrap: wrap; justify-content: center; }
+.flow-step { background: var(--surface-card); border: 1px solid var(--border); border-radius: 10px; padding: clamp(10px, 1.5vw, 18px) clamp(14px, 2vw, 22px); text-align: center; font-size: clamp(0.75rem, 1vw, 0.88rem); font-weight: 600; }
+.flow-arrow { color: var(--brand-accent); font-size: 1.2rem; padding: 0 6px; flex-shrink: 0; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; }
+.stat { text-align: center; padding: 16px; }
+.bullets { list-style: none; padding: 0; }
+.bullets li { padding: 8px 0 8px 24px; position: relative; font-size: clamp(0.85rem, 1.1vw, 0.95rem); color: var(--text-secondary); border-bottom: 1px solid var(--border); }
+.bullets li:last-child { border-bottom: none; }
+.bullets li::before { content: ''; position: absolute; left: 0; top: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--brand-accent); }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(20px, 3vw, 40px); align-items: start; }
+.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: clamp(16px, 2vw, 28px); align-items: start; }
+table { width: 100%; border-collapse: collapse; font-size: clamp(0.78rem, 1vw, 0.88rem); }
+th { text-align: left; padding: 10px 14px; background: rgba(15,23,42,0.85); color: var(--brand-accent); font-weight: 700; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 2px solid rgba(245,158,11,0.3); }
+td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-secondary); vertical-align: top; }
+tr:hover td { background: rgba(51,65,85,0.06); }
+.td-winner { color: var(--brand-success); font-weight: 700; }
+.td-chosen { background: rgba(34,197,94,0.04); }
+code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: rgba(51,65,85,0.12); padding: 2px 6px; border-radius: 4px; color:#0f172a; }
+.card-dark code { color:#fbbf24; background:rgba(245,158,11,0.18); }
+.code-block { background:#0f172a; border:1px solid rgba(245,158,11,0.2); border-radius:10px; padding:16px 18px; font-family:'JetBrains Mono',monospace; font-size:clamp(0.7rem,0.92vw,0.84rem); color:#e2e8f0; line-height:1.65; overflow-x:auto; white-space:pre; }
+.code-block .cmt { color:#64748b; } .code-block .kw { color:#f59e0b; } .code-block .str { color:#34d399; } .code-block .fn { color:#60a5fa; }
+.meta-chips { display: flex; gap: 12px; margin-top: 20px; justify-content: center; flex-wrap: wrap; }
+.chip { display: flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px; font-size: 0.8rem; color: var(--text-secondary); }
+.chip strong { color: var(--text-primary); }
+.progress-bar { position: fixed; top: 0; left: 0; height: 3px; background: var(--gradient-warm); z-index: 1000; width: 0%; transition: width 0.3s; }
+.nav-dots { position: fixed; right: 20px; top: 50%; transform: translateY(-50%); z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+.nav-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(148,163,184,0.3); cursor: pointer; transition: all 0.3s; border: none; padding: 0; }
+.nav-dot.active { background: var(--brand-accent); transform: scale(1.4); }
+.slide-counter { position: fixed; bottom: 20px; right: 24px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted); z-index: 1000; }
+.slide-counter strong { color: var(--text-primary); }
+.slide-closing { text-align: center; }
+.slide-closing h2 { font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 800; line-height: 1.1; margin-bottom: 16px; }
+.highlight-box { background: linear-gradient(135deg, rgba(245,158,11,0.08), rgba(251,146,60,0.04)); border: 1px solid rgba(245,158,11,0.25); border-left: 4px solid var(--brand-accent); border-radius: 10px; padding: 14px 18px; font-size: clamp(0.85rem, 1.1vw, 0.95rem); color: var(--text-secondary); }
+.highlight-box strong { color: var(--brand-accent); }
+.danger-box { background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.25); border-left: 4px solid var(--brand-danger); border-radius: 10px; padding: 14px 18px; font-size: clamp(0.85rem, 1.1vw, 0.95rem); color: var(--text-secondary); }
+.danger-box strong { color: var(--brand-danger); }
+.success-box { background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.25); border-left: 4px solid var(--brand-success); border-radius: 10px; padding: 14px 18px; font-size: clamp(0.85rem, 1.1vw, 0.95rem); color: var(--text-secondary); }
+.success-box strong { color: var(--brand-success); }
+.icon-large { font-size: clamp(2rem, 4vw, 3rem); margin-bottom: 12px; display: block; text-align: center; }
+@media (max-width: 767px) { .grid-2,.grid-3,.grid-4{grid-template-columns:1fr;} .two-col,.three-col{grid-template-columns:1fr;} .flow{flex-direction:column;} .flow-arrow{transform:rotate(90deg);} .nav-dots{display:none;} }
+@media (max-height: 700px) { .slide { padding: 24px 20px; } }
+</style>
+</head>
+<body>
+<div class="progress-bar" id="progress"></div>
+<nav class="nav-dots" id="navDots"></nav>
+<div class="slide-counter" id="counter"><strong>01</strong> / 00</div>
+
+<!-- 01: TITLE -->
+<section class="slide slide-title" id="s1">
+  <div class="eyebrow">CDO-07 &middot; Task Force 4 &middot; Capstone 2026</div>
+  <h1>Foresight <span class="gradient-text">Lens</span></h1>
+  <p class="lead">H&ecirc;̣ th&ocirc;́ng gi&aacute;m s&aacute;t dự b&aacute;o chủ động cho Fintech &mdash; ph&aacute;t hiện capacity exhaustion <strong>trước 15 ph&uacute;t</strong> bằng AI + Streaming + Zero-Trust.</p>
+  <div class="meta-chips">
+    <div class="chip"><strong>Kh&aacute;ch h&agrave;ng</strong> Fintech Client &middot; 120+ Microservices</div>
+    <div class="chip"><strong>H&agrave; t&acirc;̀ng</strong> AWS &middot; us-east-1 &middot; ECS Fargate</div>
+    <div class="chip"><strong>Ng&acirc;n s&aacute;ch</strong> &le; $200/th&aacute;ng Hard Cap</div>
+    <div class="chip"><strong>SLO</strong> Availability &ge; 99.5%</div>
+  </div>
+</section>
+
+<!-- 02: PROBLEM DIVIDER -->
+<section class="slide slide-divider" id="s2">
+  <div class="section-number">01</div>
+  <div class="section-label">Problem Statement</div>
+  <h2>Vấn đề: <span class="gradient-text">M&ugrave; Hệ Thống &Acirc;m Thầm</span></h2>
+  <p class="lead">SLO 99.9% bị vi phạm nhiều lần &mdash; kh&ocirc;ng phải vì thiếu tool, m&agrave; vì thiếu <em>dự b&aacute;o sớm</em>.</p>
+</section>
+
+<!-- 03: PROBLEM DETAILS -->
+<section class="slide" id="s3">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Context &middot; Kh&aacute;ch h&agrave;ng</div><h2>120+ Microservices &middot; 2.8k&rarr;9k RPS</h2><p class="lead">Fintech quy m&ocirc; tầm trung, AWS ECS Fargate + RDS Aurora + DynamoDB + SQS + ALB. Peak traffic Black Friday.</p></div>
+    <div class="grid grid-3">
+      <div class="card" style="border-top:4px solid var(--brand-danger);">
+        <span class="icon-large">&#128263;</span>
+        <h3 style="color:var(--brand-danger);text-align:center;">Silent Exhaustion</h3>
+        <p>CPU database tăng dần đến 100%, SQS backlog tích tụ, ALB connection chạm ngưỡng &mdash; <strong>không ai biết</strong> cho đến khi user gửi ticket.</p>
+      </div>
+      <div class="card" style="border-top:4px solid var(--brand-accent);">
+        <span class="icon-large">&#128201;</span>
+        <h3 style="color:var(--brand-accent);text-align:center;">SLO Vi Phạm</h3>
+        <p>SLO availability 99.9% bị vi phạm nhiều lần trong 3 tháng. CloudWatch + DataDog có nhưng thiếu <strong>baseline động</strong>.</p>
+      </div>
+      <div class="card" style="border-top:4px solid var(--brand-secondary);">
+        <span class="icon-large">&#128680;</span>
+        <h3 style="color:var(--brand-secondary);text-align:center;">Alert Fatigue</h3>
+        <p>Static threshold qu&aacute; nhạy &rarr; c&agrave;nh b&aacute;o giả tr&agrave;n ngập &rarr; SRE bỏ qua &rarr; sự cố thật bị bỏ lỡ. V&ograve;ng xo&aacute;y alert fatigue.</p>
+      </div>
+    </div>
+    <div class="card card-dark" style="margin-top:20px;">
+      <p><strong style="color:var(--brand-accent);">Root Cause:</strong> Kh&ocirc;ng c&oacute; hệ thống học baseline động &rarr; kh&ocirc;ng ph&aacute;t hiện được <em>slow drift</em> &mdash; kiểu suy giảm &acirc;m thầm, đều đặn, tích tụ thành sự cố lớn m&agrave; kh&ocirc;ng kịch hoạt static threshold.</p>
+    </div>
+  </div>
+  <div class="slide-footer"><span>01 &mdash; Problem</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 04: SOLUTION DIVIDER -->
+<section class="slide slide-divider" id="s4">
+  <div class="section-number">02</div>
+  <div class="section-label">Solution Architecture</div>
+  <h2><span class="gradient-text">Foresight Lens</span> &mdash; Dự b&aacute;o trước 15 ph&uacute;t</h2>
+  <p class="lead">TSDB-Centric Hybrid Streaming + AI + Zero-Trust Network. Mọi th&agrave;nh phần được chọn c&oacute; l&yacute; do r&otilde; r&agrave;ng v&agrave; so s&aacute;nh với alternatives.</p>
+</section>
+
+<!-- 05: ARCHITECTURE OVERVIEW -->
+<section class="slide" id="s5">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Kiến tr&uacute;c tổng quan</div><h2>2 Pipeline Ch&iacute;nh + Safety Net</h2><p class="lead">Ingestion (thu thập) &rarr; Inference (dự b&aacute;o) &rarr; Alert (c&agrave;nh b&aacute;o). Fail-Safe ở mọi điểm.</p></div>
+    <div class="flow" style="margin-bottom:20px; gap:4px; flex-wrap:wrap;">
+      <div class="flow-step" style="border-color:var(--brand-secondary);"><div style="font-weight:800;color:var(--brand-secondary);font-size:0.8rem;">Mock Services</div><div style="font-size:0.7rem;color:var(--text-muted);">3 ECS Fargate Tasks</div></div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--brand-accent);"><div style="font-weight:800;color:var(--brand-accent);font-size:0.8rem;">Kinesis KDS</div><div style="font-size:0.7rem;color:var(--text-muted);">On-Demand Streaming</div></div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step"><div style="font-weight:800;font-size:0.8rem;">Lambda Transformer</div><div style="font-size:0.7rem;color:var(--text-muted);">PII DROP + Schema</div></div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--brand-purple);"><div style="font-weight:800;color:var(--brand-purple);font-size:0.8rem;">Timestream InfluxDB</div><div style="font-size:0.7rem;color:var(--text-muted);">TSDB &middot; 2h Window</div></div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step" style="border-color:var(--brand-success);"><div style="font-weight:800;color:var(--brand-success);font-size:0.8rem;">AI Engine</div><div style="font-size:0.7rem;color:var(--text-muted);">ECS Fargate &middot; EWMA+STL</div></div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step"><div style="font-weight:800;font-size:0.8rem;">SNS &rarr; Slack</div><div style="font-size:0.7rem;color:var(--text-muted);">Drift Alert</div></div>
+    </div>
+    <div class="grid grid-3">
+      <div class="card card-accent">
+        <h3>&#128260; Ingestion Pipeline</h3>
+        <p>Mock Services ph&aacute;t telemetry &rarr; Kinesis buffer &rarr; Lambda lọc PII &rarr; Timestream for InfluxDB. <strong>Zero data loss</strong> nhờ 24h Kinesis retention.</p>
+      </div>
+      <div class="card card-blue">
+        <h3>&#129504; Inference Pipeline</h3>
+        <p>EventBridge (mỗi 5 ph&uacute;t) kích hoạt Window Feeder &rarr; truy vấn 2h metrics &rarr; AI Engine <code>POST /v1/predict</code>. Lead time <strong>&ge; 15 ph&uacute;t</strong>.</p>
+      </div>
+      <div class="card card-success">
+        <h3>&#128737; Safety Net</h3>
+        <p>Fail-Open Fallback khi AI timeout/down. Cost Circuit Breaker ngắt inference khi $200. <strong>Kh&ocirc;ng bao giờ im lặng.</strong></p>
+      </div>
+    </div>
+    <div class="highlight-box" style="margin-top:16px;"><strong>Zero-Trust:</strong> 8 VPC Endpoints (SSM, SNS, AMG, ECR, CW, TS, S3, KDS) &mdash; kh&ocirc;ng c&oacute; Internet Gateway, kh&ocirc;ng c&oacute; NAT Gateway. k6 load test qua SSM Port Forwarding tunnel.</div>
+  </div>
+  <div class="slide-footer"><span>02 &mdash; Solution Architecture</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 05b: ARCHITECTURE DIAGRAM -->
+<section class="slide" id="s5b">
+  <div class="slide-content" style="max-width:1200px;">
+    <div class="slide-header"><div class="eyebrow">Kiến trúc thực tế &middot; CDO7.drawio</div><h2>Sơ đồ kiến trúc tổng thể</h2><p class="lead">Toàn bộ luồng dữ liệu và các thành phần — từ Mock Services ở biên tới AI Engine, Grafana và Slack Alert.</p></div>
+    <div style="text-align:center; margin-top:8px;">
+      <img src="images/CDO7.drawio.png" alt="CDO7 Architecture Diagram" style="max-width:100%; max-height:70vh; border-radius:12px; border:1px solid var(--border); box-shadow:0 4px 24px rgba(15,23,42,0.1); object-fit:contain;" />
+    </div>
+  </div>
+  <div class="slide-footer"><span>02 &mdash; Solution Architecture</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 06: SERVICE SELECTION DIVIDER -->
+<section class="slide slide-divider" id="s6">
+  <div class="section-number">03</div>
+  <div class="section-label">Service Selection &middot; Deep-Dive</div>
+  <h2>Tại sao ch&uacute;ng t&ocirc;i chọn <span class="gradient-text">từng service</span> n&agrave;y?</h2>
+  <p class="lead">Mỗi lựa chọn đều c&oacute; bảng so s&aacute;nh alternatives &mdash; kh&ocirc;ng phải chọn vì quen, m&agrave; vì số liệu v&agrave; requirements.</p>
+</section>
+
+<!-- 07: COMPUTE - ECS FARGATE -->
+<section class="slide" id="s7">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Service Selection #1 &middot; Compute</div><h2>AI Engine: <span class="gradient-text-blue">ECS Fargate</span> vs Lambda vs EKS</h2><p class="lead">AI Serving cần <em>long-running, stateful, predictable latency</em> &mdash; 3 y&ecirc;u cầu loại bỏ Lambda v&agrave; EKS ngay từ đầu.</p></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Ti&ecirc;u ch&iacute;</th><th style="color:#22c55e;">&#9989; ECS Fargate (Đ&atilde; chọn)</th><th>Lambda</th><th>EKS (Kubernetes)</th></tr></thead>
+        <tbody>
+          <tr class="td-chosen"><td><strong>Long-running &ge; 2h</strong></td><td class="td-winner">&#9989; Kh&ocirc;ng giới hạn</td><td>&#10060; Timeout 15 ph&uacute;t &mdash; block cửa sổ test &ge; 2h</td><td>&#9989; Kh&ocirc;ng giới hạn</td></tr>
+          <tr class="td-chosen"><td><strong>Cold Start &amp; Latency</strong></td><td class="td-winner">&#9989; Kh&ocirc;ng cold start &middot; p99 &lt; 200ms</td><td>&#10060; Cold start 500ms+ với ML libraries</td><td>&#9989; Kh&ocirc;ng cold start</td></tr>
+          <tr class="td-chosen"><td><strong>Stateful Circuit Breaker</strong></td><td class="td-winner">&#9989; State sống trong v&ograve;ng đời task</td><td>&#10060; State reset mỗi invocation</td><td>&#9989; Stateful</td></tr>
+          <tr class="td-chosen"><td><strong>Ops Overhead</strong></td><td class="td-winner">&#9989; AWS quản l&yacute; OS, patching, host</td><td>&#9989; Zero-ops</td><td>&#10060; Quản l&yacute; control plane K8s phức tạp</td></tr>
+          <tr class="td-chosen"><td><strong>Chi ph&iacute; (2 tasks 24/7)</strong></td><td class="td-winner">~$67.22/th&aacute;ng &mdash; predictable</td><td>Rẻ nếu &iacute;t invoke, nhưng kh&ocirc;ng ph&ugrave; hợp</td><td>&#10060; Control plane ~$73/th&aacute;ng + nodes</td></tr>
+          <tr class="td-chosen"><td><strong>Zero-ops requirement</strong></td><td class="td-winner">&#9989; Serverless container</td><td>&#9989; Serverless function</td><td>&#10060; Vi phạm &mdash; cần quản l&yacute; cluster</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="success-box" style="margin-top:16px;"><strong>Kết luận:</strong> ECS Fargate = duy nhất đ&aacute;p ứng cả 3 y&ecirc;u cầu: long-running &ge; 2h, stateful circuit breaker, zero-ops. Spec: AI Engine 0.5 vCPU / 1GB RAM &middot; 3 Mock Services 0.5 vCPU / 0.5GB mỗi task.</div>
+  </div>
+  <div class="slide-footer"><span>03 &mdash; Service Selection</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 08: KINESIS -->
+<section class="slide" id="s8">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Service Selection #2 &middot; Event Streaming</div><h2>Ingestion: <span class="gradient-text">Kinesis On-Demand</span> vs Kafka vs Provisioned</h2><p class="lead">Cần buffer chống spike + c&ocirc; lập tenant + chi ph&iacute; linh hoạt trong ng&acirc;n s&aacute;ch $200.</p></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Ti&ecirc;u ch&iacute;</th><th style="color:#22c55e;">&#9989; KDS On-Demand (Đ&atilde; chọn)</th><th>KDS Provisioned</th><th>MSK (Kafka)</th></tr></thead>
+        <tbody>
+          <tr class="td-chosen"><td><strong>Chi ph&iacute; cơ bản</strong></td><td class="td-winner">~$28.50/th&aacute;ng &mdash; pay-per-use</td><td>~$60/th&aacute;ng cố định &mdash; lãng ph&iacute; giờ rảnh</td><td>&#10060; ~$200+/th&aacute;ng &mdash; vượt budget</td></tr>
+          <tr class="td-chosen"><td><strong>Auto-scaling</strong></td><td class="td-winner">&#9989; Tự động split shard khi spike</td><td>&#10060; Phải t&iacute;nh to&aacute;n shard trước</td><td>&#9989; Tự scale nhưng phức tạp config</td></tr>
+          <tr class="td-chosen"><td><strong>Multi-tenant isolation</strong></td><td class="td-winner">&#9989; Partition key = service_id &rarr; Hot Shard Split tự động</td><td>&#9989; C&ugrave;ng cơ chế</td><td>&#9989; Topic per tenant &mdash; qu&aacute; phức tạp</td></tr>
+          <tr class="td-chosen"><td><strong>Ops Overhead</strong></td><td class="td-winner">&#9989; Fully Managed AWS</td><td>&#9989; Managed</td><td>&#10060; Quản l&yacute; cluster &mdash; vi phạm zero-ops</td></tr>
+          <tr class="td-chosen"><td><strong>24h buffer (replay)</strong></td><td class="td-winner">&#9989; Replay khi Transformer lỗi</td><td>&#9989; 24h+</td><td>&#9989; Tunable</td></tr>
+          <tr class="td-chosen"><td><strong>Throughput tối đa</strong></td><td class="td-winner">&#9989; Tự scale l&ecirc;n 50k events/sec</td><td>Giới hạn theo shard count</td><td>&#9989; Rất cao &mdash; nhưng qu&aacute; mức cần</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="success-box" style="margin-top:16px;"><strong>Kết luận:</strong> Kinesis On-Demand tiết kiệm &gt;50% so với Provisioned. Kafka bị loại vì chi ph&iacute; &amp; ops overhead vi phạm budget v&agrave; zero-ops requirement. Partition key = service_id &rarr; Noisy Neighbor mitigation tự động.</div>
+  </div>
+  <div class="slide-footer"><span>03 &mdash; Service Selection</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 09: TIMESTREAM FOR INFLUXDB -->
+<section class="slide" id="s9">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Service Selection #3 &middot; Time-Series Database</div><h2>TSDB: <span class="gradient-text-blue">Timestream for InfluxDB</span> vs Prometheus vs CloudWatch</h2><p class="lead">AI Engine cần query cửa sổ 2h với độ trễ thấp &mdash; TSDB chuy&ecirc;n biệt l&agrave; bắt buộc.</p></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Ti&ecirc;u ch&iacute;</th><th style="color:#22c55e;">&#9989; Timestream InfluxDB (Đ&atilde; chọn)</th><th>Prometheus + EC2</th><th>CloudWatch Custom Metrics</th></tr></thead>
+        <tbody>
+          <tr class="td-chosen"><td><strong>Query cửa sổ 2h, độ trễ thấp</strong></td><td class="td-winner">&#9989; Flux query &lt; 100ms &mdash; đ&aacute;p ứng AI Engine</td><td>&#9888; PromQL nhanh nhưng self-host</td><td>&#10060; Nén dữ liệu sau 15 ng&agrave;y &mdash; mất độ ch&iacute;nh x&aacute;c</td></tr>
+          <tr class="td-chosen"><td><strong>Zero-ops</strong></td><td class="td-winner">&#9989; AWS Managed</td><td>&#10060; Quản l&yacute; EC2, storage, backup</td><td>&#9989; Fully managed</td></tr>
+          <tr class="td-chosen"><td><strong>Multi-tenant isolation</strong></td><td class="td-winner">&#9989; Tag-based: tenant_id + service_id filter</td><td>&#9888; Label-based, cardinality cẩn thận</td><td>&#10060; Chi ph&iacute; tăng vọt theo cardinality</td></tr>
+          <tr class="td-chosen"><td><strong>Grafana Plugin</strong></td><td class="td-winner">&#9989; Native InfluxDB datasource &mdash; direct query</td><td>&#9989; Prometheus datasource</td><td>&#9888; CloudWatch datasource &mdash; k&eacute;m linh hoạt</td></tr>
+          <tr class="td-chosen"><td><strong>InfluxDB Line Protocol</strong></td><td class="td-winner">&#9989; Lambda Transformer ghi trực tiếp /api/v2/write</td><td>&#10060; Kh&ocirc;ng t&acirc;́ng th&iacute;ch trực tiếp</td><td>&#10060; API ri&ecirc;ng &mdash; kh&ocirc;ng d&ugrave;ng InfluxQL/Flux</td></tr>
+          <tr class="td-chosen"><td><strong>Chi ph&iacute;</strong></td><td class="td-winner">~$116.40/th&aacute;ng &mdash; predictable</td><td>EC2 ~$30 + EBS + chi ph&iacute; ẩn ops</td><td>$0.30/1000 metrics &mdash; leo thang</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="danger-box" style="margin-top:14px;"><strong>ADR-000 pivot:</strong> Ban đầu chọn Timestream LiveAnalytics &rarr; bị block <code>AccessDeniedException</code> trong t&agrave;i khoản capstone. Team pivot sang Timestream for InfluxDB (&lt;1 ng&agrave;y) &mdash; dịch vụ kh&aacute;c ho&agrave;n to&agrave;n, vẫn giữ g&oacute;c độ TSDB-Centric.</div>
+  </div>
+  <div class="slide-footer"><span>03 &mdash; Service Selection</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 10: MANAGED GRAFANA + S3 AUDIT -->
+<section class="slide" id="s10">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Service Selection #4 &amp; #5 &middot; Observability + Audit</div><h2><span class="gradient-text">Managed Grafana</span> &amp; <span class="gradient-text-green">S3 Lifecycle</span></h2></div>
+    <div class="two-col">
+      <div>
+        <p style="font-size:0.8rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--brand-accent);margin-bottom:10px;">#4 Observability Dashboard</p>
+        <table style="margin-bottom:14px;">
+          <thead><tr><th>Option</th><th>Zero-ops</th><th>Annotation Overlay</th><th>Cost</th></tr></thead>
+          <tbody>
+            <tr class="td-chosen"><td><strong>&#9989; Managed Grafana</strong></td><td class="td-winner">&#9989;</td><td class="td-winner">&#9989; AI push HTTP API</td><td class="td-winner">$9/th&aacute;ng</td></tr>
+            <tr><td>Grafana t&ecirc;̣ ECS</td><td>&#10060;</td><td>&#9989;</td><td>~$15-20/th&aacute;ng + ops</td></tr>
+            <tr><td>CloudWatch Dashboards</td><td>&#9989;</td><td>&#10060; K&eacute;m linh hoạt</td><td>$0 built-in</td></tr>
+          </tbody>
+        </table>
+        <div class="success-box"><strong>Lý do chọn:</strong> $9/th&aacute;ng &middot; AWS SSO native &middot; Timestream Plugin direct &middot; Manual Approve Gate cho SRE.</div>
+      </div>
+      <div>
+        <p style="font-size:0.8rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--brand-accent);margin-bottom:10px;">#5 Audit Log Storage</p>
+        <table style="margin-bottom:14px;">
+          <thead><tr><th>Option</th><th>Chi ph&iacute;</th><th>Lifecycle tự động</th><th>WORR fit</th></tr></thead>
+          <tbody>
+            <tr class="td-chosen"><td><strong>&#9989; S3 + Lifecycle</strong></td><td class="td-winner">~$0.79/th&aacute;ng</td><td class="td-winner">&#9989; Tự động 2 stage</td><td class="td-winner">&#9989; Perfect</td></tr>
+            <tr><td>DynamoDB</td><td>~$5-10/th&aacute;ng</td><td>&#10060;</td><td>&#10060; Qu&aacute; đắt</td></tr>
+            <tr><td>RDS</td><td>~$25+/th&aacute;ng</td><td>&#10060; Manual snapshot</td><td>&#10060;</td></tr>
+          </tbody>
+        </table>
+        <div class="card card-accent">
+          <h3>S3 Lifecycle 2 Giai Đoạn (ADR-004)</h3>
+          <div class="code-block" style="margin-top:8px;font-size:0.76rem;"><span class="cmt">0&ndash;90 ng&agrave;y  : S3 Standard (SRE debug/Athena)</span>
+<span class="cmt">90&ndash;365 ng&agrave;y: Glacier Deep Archive (compliance)</span>
+<span class="cmt">365+ ng&agrave;y  : Auto-expire (giới hạn 1 năm)</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>03 &mdash; Service Selection</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 11: SECURITY DIVIDER -->
+<section class="slide slide-divider" id="s11">
+  <div class="section-number">04</div>
+  <div class="section-label">Security Design</div>
+  <h2>Zero-Trust Network: <span class="gradient-text">Khép K&iacute;n 100%</span></h2>
+  <p class="lead">Kh&ocirc;ng c&oacute; Internet Gateway. Kh&ocirc;ng c&oacute; NAT Gateway. 8 VPC Endpoints. Một ngoại lệ duy nhất c&oacute; chủ &yacute;.</p>
+</section>
+
+<!-- 12: SECURITY DETAILS -->
+<section class="slide" id="s12">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Network Security &middot; Zero-Trust</div><h2>8 VPC Endpoints &middot; 5 Security Groups &middot; KMS CMK</h2></div>
+    <div class="two-col">
+      <div>
+        <div class="card card-dark" style="margin-bottom:12px;">
+          <h3>&#128274; 8 VPC Endpoints</h3>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;">
+            <span class="badge badge-blue">SSM</span><span class="badge badge-blue">SNS</span><span class="badge badge-blue">AMG (Grafana)</span><span class="badge badge-blue">ECR</span><span class="badge badge-blue">CloudWatch</span><span class="badge badge-blue">Timestream</span><span class="badge badge-accent">S3 Gateway</span><span class="badge badge-blue">KDS</span>
+          </div>
+          <p style="margin-top:10px; font-size:0.85rem;">7 Interface + 1 S3 Gateway. Chi ph&iacute;: ~$50.40/th&aacute;ng &mdash; đ&aacute;nh đổi c&oacute; chủ &yacute; cho SOC2 compliance.</p>
+        </div>
+        <div class="card" style="border-left:4px solid var(--brand-danger);">
+          <h3 style="color:var(--brand-danger);">&#9888; Ngoại lệ Duy Nhất: Lambda SNS-to-SLACK</h3>
+          <p>Chạy <strong>Non-VPC Lambda</strong> &rarr; nhận SNS trigger qua AWS internal &rarr; gửi HTTPS 443 ra <code>hooks.slack.com</code>. Kh&ocirc;ng cần NAT Gateway, kh&ocirc;ng ph&aacute; vỡ private boundary.</p>
+        </div>
+      </div>
+      <div>
+        <div class="card card-accent" style="margin-bottom:12px;">
+          <h3>&#128272; 5 Security Groups</h3>
+          <ul class="bullets">
+            <li><code>tf4-cdo07-alb-sg</code> &mdash; ALB Internal (HTTPS 443 inbound)</li>
+            <li><code>tf4-cdo07-app-sg</code> &mdash; ECS Tasks (HTTP 8080 từ ALB)</li>
+            <li><code>tf4-cdo07-lambda-sg</code> &mdash; Lambda functions (no inbound)</li>
+            <li><code>tf4-cdo07-vpce-sg</code> &mdash; Interface VPC Endpoints</li>
+            <li><code>tf4-cdo07-influxdb-sg</code> &mdash; Timestream (TCP 8086)</li>
+          </ul>
+        </div>
+        <div class="highlight-box">
+          <strong>k6 Load Test:</strong> External k6 kết nối qua <strong>AWS SSM Port Forwarding Session</strong> &rarr; SSM VPC Endpoint &rarr; Internal ALB. ALB path-based routing: <code>/v1/predict</code> &rarr; AI Engine &middot; <code>/*</code> &rarr; Mock Services.
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>04 &mdash; Security Design</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 13: AI + FAIL-OPEN DIVIDER -->
+<section class="slide slide-divider" id="s13">
+  <div class="section-number">05</div>
+  <div class="section-label">AI &amp; Resilience</div>
+  <h2>Predict sớm &middot; <span class="gradient-text">Fail-Open</span> khi kh&ocirc;ng predict được</h2>
+  <p class="lead">EWMA+STL model zero token cost. Fail-Open Fallback đảm bảo hệ thống kh&ocirc;ng bao giờ im lặng.</p>
+</section>
+
+<!-- 14: AI + FAIL-OPEN DETAILS -->
+<section class="slide" id="s14">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">AI Engine + Resilience</div><h2>EWMA+STL Model &middot; Fail-Open Fallback &middot; Cost CB</h2></div>
+    <div class="grid grid-2">
+      <div class="card card-blue">
+        <h3>&#129504; AI Model: <code>tf4-ewma-stl-v1</code></h3>
+        <ul class="bullets">
+          <li>EWMA + STL Decomposition &mdash; NumPy-based</li>
+          <li>Zero token cost (kh&ocirc;ng d&ugrave;ng LLM)</li>
+          <li>Input: 2h sliding window từ Timestream InfluxDB</li>
+          <li>Output: 5-part Capacity Recommendation</li>
+          <li><em>"Scale payment-gw 2&rarr;4 tasks; confidence=0.87"</em></li>
+        </ul>
+      </div>
+      <div class="card" style="border-top:4px solid var(--brand-danger);">
+        <h3 style="color:var(--brand-danger);">&#128737; Fail-Open Fallback (RTO &lt;1s)</h3>
+        <ul class="bullets">
+          <li>AI Engine timeout &gt; 5s &rarr; kích hoạt tức thì</li>
+          <li>CloudWatch metrics qua VPC Endpoint</li>
+          <li>Static: CPU &gt; 30%, Mem &gt; 50%, Conn &gt; 450, Queue &gt; 10k</li>
+          <li>Vẫn ghi audit S3 + push annotation Grafana + alert Slack</li>
+        </ul>
+      </div>
+      <div class="card card-accent">
+        <h3>&#128184; Cost Circuit Breaker</h3>
+        <ul class="bullets">
+          <li>Alert $165 (80%): push Grafana annotation + Slack</li>
+          <li>Hard stop $200 (100%): Lambda CB set SSM <code>inference_enabled = false</code></li>
+          <li>Toàn bộ inference dừng trong &lt;5s</li>
+        </ul>
+      </div>
+      <div class="card card-success">
+        <h3>&#128203; 5-Part Recommendation</h3>
+        <div class="code-block" style="margin-top:8px; font-size:0.76rem;"><span class="kw">[Action]</span> Scale ECS service
+<span class="kw">[Target]</span> payment-gw
+<span class="kw">[From&rarr;To]</span> 2 tasks &rarr; 4 tasks
+<span class="kw">[Confidence]</span> 0.87
+<span class="kw">[Evidence]</span> s3://.../audit.json</div>
+        <p style="margin-top:8px;">SRE review Grafana &rarr; Manual Approve Gate &rarr; Action.</p>
+      </div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>05 &mdash; AI &amp; Resilience</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 14b: CI/CD PIPELINE DIAGRAM -->
+<section class="slide" id="s14b">
+  <div class="slide-content" style="max-width:1200px;">
+    <div class="slide-header"><div class="eyebrow">Deployment &middot; GitOps CI/CD Pipeline</div><h2>Hạ tầng triển khai: <span class="gradient-text-blue">Terraform + GitHub Actions</span></h2><p class="lead">Toàn bộ infrastructure-as-code qua Terraform — mọi thay đổi địu đi qua Git, tự động plan/apply/validate trước khi lên production.</p></div>
+    <div style="text-align:center; margin-top:8px;">
+      <img src="images/cicd.jpg" alt="CI/CD Pipeline Diagram" style="max-width:100%; max-height:68vh; border-radius:12px; border:1px solid var(--border); box-shadow:0 4px 24px rgba(15,23,42,0.1); object-fit:contain;" />
+    </div>
+    <div class="highlight-box" style="margin-top:14px;"><strong>GitOps:</strong> Push code → GitHub Actions chạy <code>terraform plan</code> + <code>tflint</code> + Checkov → manual approve → <code>terraform apply</code>. Branch protection: 1 Tech Lead approval bắt buộc trước merge vào <code>main</code>.</div>
+  </div>
+  <div class="slide-footer"><span>05 &mdash; Deployment</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 15: COST BREAKDOWN DIVIDER -->
+<section class="slide slide-divider" id="s15">
+  <div class="section-number">06</div>
+  <div class="section-label">FinOps &middot; Cost Analysis</div>
+  <h2>FinOps &middot; <span class="gradient-text">Tối Ưu H&oacute;a Chi Ph&iacute; Thực Tế</span></h2>
+  <p class="lead">Run-rate l&yacute; thuyết đầy đủ l&agrave; ~$305/th&aacute;ng, nhưng nhờ m&ocirc; h&igrave;nh Pay-per-use, chi ph&iacute; thực tế kiểm thử 2 tuần nằm an to&agrave;n dưới ngưỡng $165.</p>
+</section>
+
+<!-- 16: COST TABLE -->
+<section class="slide" id="s16">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Cost Breakdown</div><h2>Chi tiết từng Service</h2></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Service</th><th>Chi ph&iacute;/th&aacute;ng</th><th>L&yacute; do chọn</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ECS Fargate</strong> (AI + 3 Mocks)</td><td><strong>$67.22</strong></td><td>Long-running, stateful, zero-ops</td></tr>
+          <tr><td><strong>Timestream for InfluxDB</strong> (db.influx.medium)</td><td><strong>$116.40</strong></td><td>Native InfluxDB API, Zero-ops, Grafana Plugin</td></tr>
+          <tr><td><strong>VPC Endpoints</strong> (8 endpoints)</td><td><strong>$50.40</strong></td><td>SOC2 compliance, Zero-Trust, kh&ocirc;ng cần IGW/NAT</td></tr>
+          <tr><td><strong>Kinesis Data Streams</strong> (On-Demand)</td><td><strong>~$28.50</strong></td><td>Pay-per-use, auto-scale, tiết kiệm &gt;50% vs Provisioned</td></tr>
+          <tr><td><strong>ALB Internal</strong></td><td><strong>$21.96</strong></td><td>Path-based routing, health check, single entry point</td></tr>
+          <tr><td><strong>CloudWatch Logs</strong></td><td><strong>$6.10</strong></td><td>Centralized logging, 8 alarms</td></tr>
+          <tr><td><strong>Amazon Managed Grafana</strong></td><td><strong>$9.00</strong></td><td>Zero-ops, Timestream Plugin, AWS SSO native</td></tr>
+          <tr><td><strong>Lambda + EventBridge</strong></td><td><strong>$4.50</strong></td><td>Window Feeder, Transformer, CB, Fail-Open</td></tr>
+          <tr><td>S3 + Glacier, ECR, SNS, Budgets</td><td>~$1.80</td><td>Audit log, container registry, alerts</td></tr>
+          <tr style="background:rgba(245,158,11,0.05);"><td><strong>Total Run-Rate</strong></td><td><strong>~$305.38</strong></td><td>L&yacute; thuyết 1 th&aacute;ng đầy đủ</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="highlight-box" style="margin-top:14px;"><strong>Tại sao an to&agrave;n với $200 cap:</strong> Kinesis On-Demand chỉ t&iacute;nh theo lưu lượng thực tế. 2 tuần kiểm thử kh&ocirc;ng chạy 24/7 &rarr; chi ph&iacute; thực tế giảm mạnh. AWS Budgets cắt inference tự động tại $200 &mdash; safety net cuối c&ugrave;ng không thể bỏ qua.</div>
+  </div>
+  <div class="slide-footer"><span>06 &mdash; FinOps</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 17: NFR COVERAGE -->
+<section class="slide" id="s17">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Non-Functional Requirements</div><h2>Đ&aacute;p ứng to&agrave;n bộ NFR</h2><p class="lead">Kiểm tra từng ti&ecirc;u ch&iacute; kỹ thuật đ&atilde; được đặt ra từ đầu.</p></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>NFR</th><th>Target</th><th>C&aacute;ch đ&aacute;p ứng</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Multi-tenant</strong></td><td>&ge; 3 tenant</td><td>payment-gw, ledger-svc, fraud-detection &middot; partition key isolation</td><td class="td-winner">&#9989; Đạt</td></tr>
+          <tr><td><strong>SLO p99 latency</strong></td><td>&lt; 1000ms</td><td>ECS Fargate kh&ocirc;ng cold start, VPC Endpoints nội bộ, p99 thực tế &lt; 200ms</td><td class="td-winner">&#9989; Đạt</td></tr>
+          <tr><td><strong>Availability</strong></td><td>&ge; 99.5%</td><td>ECS auto-restart &lt;30s, Kinesis 24h retry, Fail-Open Fallback &lt;1s RTO</td><td class="td-winner">&#9989; Demo 99.5%</td></tr>
+          <tr><td><strong>Lead time dự b&aacute;o</strong></td><td>&ge; 15 ph&uacute;t</td><td>Cửa sổ 2h + EWMA+STL &rarr; ph&aacute;t hiện drift sớm</td><td class="td-winner">&#9989; Đạt</td></tr>
+          <tr><td><strong>Cost cap</strong></td><td>&le; $200/th&aacute;ng</td><td>Kinesis On-Demand + Cost CB set SSM flag tại $200</td><td class="td-winner">&#9989; An to&agrave;n</td></tr>
+          <tr><td><strong>Onboarding SLA</strong></td><td>&lt; 30 ph&uacute;t</td><td>Quy tr&igrave;nh 5 bước chuẩn, smoke test verification</td><td class="td-winner">&#9989; &lt; 30 ph&uacute;t</td></tr>
+          <tr><td><strong>Fail-open fallback</strong></td><td>Static threshold</td><td>Lambda Fail-Open Fallback v&agrave; CloudWatch metrics, RTO &lt;1s</td><td class="td-winner">&#9989; Đạt</td></tr>
+          <tr><td><strong>Security baseline</strong></td><td>IAM + KMS + audit</td><td>5 SGs, 8 VPC Endpoints, KMS CMK, S3 lifecycle, SSE-KMS</td><td class="td-winner">&#9989; SOC2/GDPR/PCI-DSS</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="slide-footer"><span>06 &mdash; NFR Coverage</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 18: DIFFERENTIATION DIVIDER -->
+<section class="slide slide-divider" id="s18">
+  <div class="section-number">07</div>
+  <div class="section-label">Differentiation</div>
+  <h2>Điều g&igrave; l&agrave;m ch&uacute;ng t&ocirc;i <span class="gradient-text">kh&aacute;c biệt</span>?</h2>
+  <p class="lead">So với giải ph&aacute;p truyền thống tự vận h&agrave;nh &mdash; 4 trục đo lường kh&ocirc;ng thể tranh luận.</p>
+</section>
+
+<!-- 19: DIFFERENTIATION DETAILS -->
+<section class="slide" id="s19">
+  <div class="slide-content">
+    <div class="slide-header"><div class="eyebrow">Competitive Differentiation</div><h2>CDO-07 vs Self-Hosted Traditional</h2></div>
+    <div style="overflow-x:auto; margin-bottom:16px;">
+      <table>
+        <thead><tr><th>Trục đo lường</th><th style="color:#22c55e;">CDO-07 Foresight Lens</th><th>Self-Hosted Traditional</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Ops overhead (giờ/tuần)</strong></td><td class="td-winner"><strong>0 giờ</strong> &mdash; Fully Managed Services</td><td>8-12 giờ (OS patching, DB scaling, cluster management)</td></tr>
+          <tr><td><strong>Lead time dự b&aacute;o</strong></td><td class="td-winner"><strong>&ge; 15 ph&uacute;t</strong> &mdash; Cửa sổ 2h + TSDB nhanh + AI Engine</td><td>Reactive &mdash; ph&aacute;t hiện sau khi sự cố xảy ra</td></tr>
+          <tr><td><strong>Bảo mật mạng</strong></td><td class="td-winner"><strong>100% Zero-Trust</strong> &mdash; 8 VPC Endpoints PrivateLink, kh&ocirc;ng IGW/NAT</td><td>Dễ r&ograve; rỉ qua Public IP hoặc NAT k&eacute;m bảo mật</td></tr>
+          <tr><td><strong>Chi ph&iacute; ng&acirc;n s&aacute;ch $200</strong></td><td class="td-winner"><strong>Tu&acirc;n thủ</strong> &mdash; Cost CB tự ngắt tại $200 hard limit</td><td>Kh&oacute; kiểm so&aacute;t, dễ l&oacute; ng&acirc;n s&aacute;ch do chi ph&iacute; ẩn EC2/EBS</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid grid-3">
+      <div class="card card-dark"><h3>&#128302; Proactive vs Reactive</h3><p>Ph&aacute;t hiện drift trước 15 ph&uacute;t &mdash; kh&ocirc;ng phải sau khi user gửi ticket. Static threshold chỉ b&aacute;o khi đ&atilde; qu&aacute; muộn.</p></div>
+      <div class="card card-dark"><h3>&#129302; Self-Healing Pipeline</h3><p>Fail-Open tự kích hoạt. Cost CB tự ngắt. Kinesis buffer tự retry. Kh&ocirc;ng cần người trực 24/7.</p></div>
+      <div class="card card-dark"><h3>&#128230; SaaS-Ready</h3><p>Multi-tenant partition key isolation. Onboarding &lt;30 ph&uacute;t. Mở rộng th&ecirc;m tenant kh&ocirc;ng cần thay đổi hạ tầng l&otilde;i.</p></div>
+    </div>
+  </div>
+  <div class="slide-footer"><span>07 &mdash; Differentiation</span><span>CDO-07 &middot; Foresight Lens</span></div>
+</section>
+
+<!-- 20: CLOSING -->
+<section class="slide slide-closing" id="s20">
+  <div class="eyebrow">CDO-07 &middot; Task Force 4 &middot; Capstone 2026</div>
+  <h2>Foresight <span class="gradient-text">Lens</span></h2>
+  <div class="flow" style="margin: 20px 0; gap:4px;">
+    <div class="flow-step" style="border-color:var(--brand-secondary);"><div style="font-weight:800;color:var(--brand-secondary);">Ingest</div><div style="font-size:0.72rem;color:var(--text-muted);">Kinesis + Lambda PII</div></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color:var(--brand-purple);"><div style="font-weight:800;color:var(--brand-purple);">Store</div><div style="font-size:0.72rem;color:var(--text-muted);">Timestream InfluxDB</div></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color:var(--brand-accent);"><div style="font-weight:800;color:var(--brand-accent);">Predict</div><div style="font-size:0.72rem;color:var(--text-muted);">AI Engine &middot; 15 min early</div></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color:var(--brand-success);"><div style="font-weight:800;color:var(--brand-success);">Alert</div><div style="font-size:0.72rem;color:var(--text-muted);">SNS &rarr; Slack</div></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color:var(--brand-danger);"><div style="font-weight:800;color:var(--brand-danger);">Approve</div><div style="font-size:0.72rem;color:var(--text-muted);">Grafana Manual Gate</div></div>
+  </div>
+  <p class="lead" style="max-width:760px;margin:0 auto 24px;">Kh&ocirc;ng phải hệ thống gi&aacute;m s&aacute;t th&ocirc;ng thường &mdash; m&agrave; l&agrave; <strong>đ&ocirc;i mắt biết nh&igrave;n về tương lai</strong> cho hạ tầng Fintech. Zero-Trust &middot; Zero-Ops &middot; Self-Healing &middot; SaaS-Ready.</p>
+  <div class="stat-grid" style="max-width:700px; margin: 0 auto;">
+    <div class="stat"><div class="card-number" style="font-size:2.5rem;">15 min</div><div class="card-label">Lead time trước sự cố</div></div>
+    <div class="stat"><div class="card-number" style="font-size:2.5rem;">0 giờ</div><div class="card-label">Ops overhead/tuần</div></div>
+    <div class="stat"><div class="card-number" style="font-size:2.5rem;">8</div><div class="card-label">VPC Endpoints Zero-Trust</div></div>
+    <div class="stat"><div class="card-number" style="font-size:2.5rem;">&lt;1s</div><div class="card-label">Fail-Open RTO</div></div>
+  </div>
+</section>
+
+<script>
+class SlidePresentation {
+  constructor() {
+    this.slides = document.querySelectorAll('.slide');
+    this.dots = document.getElementById('navDots');
+    this.counter = document.getElementById('counter');
+    this.progress = document.getElementById('progress');
+    this.total = this.slides.length;
+    this.currentIndex = 0;
+    this.wheelTimeout = null;
+    this.init();
+  }
+  init() { this.createDots(); this.observeSlides(); this.bindKeys(); this.bindWheel(); this.bindTouch(); this.update(0); }
+  createDots() {
+    this.slides.forEach((_, i) => {
+      const dot = document.createElement('button');
+      dot.className = 'nav-dot';
+      dot.title = 'Slide ' + (i + 1);
+      dot.addEventListener('click', () => this.slides[i].scrollIntoView({ behavior: 'smooth' }));
+      this.dots.appendChild(dot);
+    });
+    this.dotEls = this.dots.querySelectorAll('.nav-dot');
+  }
+  observeSlides() {
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting && e.intersectionRatio > 0.5) { const idx = [...this.slides].indexOf(e.target); if (idx >= 0) this.update(idx); } });
+    }, { threshold: 0.5 });
+    this.slides.forEach(s => obs.observe(s));
+  }
+  update(idx) {
+    this.currentIndex = idx;
+    this.dotEls.forEach((d, i) => d.classList.toggle('active', i === idx));
+    const num = String(idx + 1).padStart(2, '0');
+    this.counter.innerHTML = '<strong>' + num + '</strong> / ' + this.total;
+    this.progress.style.width = ((idx + 1) / this.total * 100) + '%';
+  }
+  go(dir) { const next = Math.max(0, Math.min(this.total - 1, this.currentIndex + dir)); this.slides[next].scrollIntoView({ behavior: 'smooth' }); }
+  bindKeys() {
+    document.addEventListener('keydown', e => {
+      if (['ArrowDown','ArrowRight','Space','PageDown'].includes(e.code)) { e.preventDefault(); this.go(1); }
+      if (['ArrowUp','ArrowLeft','PageUp'].includes(e.code)) { e.preventDefault(); this.go(-1); }
+      if (e.code === 'Home') { e.preventDefault(); this.slides[0].scrollIntoView({ behavior: 'smooth' }); }
+      if (e.code === 'End') { e.preventDefault(); this.slides[this.total-1].scrollIntoView({ behavior: 'smooth' }); }
+    });
+  }
+  bindWheel() {
+    document.addEventListener('wheel', e => { if (this.wheelTimeout) return; this.wheelTimeout = setTimeout(() => this.wheelTimeout = null, 700); this.go(e.deltaY > 0 ? 1 : -1); }, { passive: true });
+  }
+  bindTouch() {
+    let startY = 0;
+    document.addEventListener('touchstart', e => startY = e.touches[0].clientY);
+    document.addEventListener('touchend', e => { const diff = startY - e.changedTouches[0].clientY; if (Math.abs(diff) > 60) this.go(diff > 0 ? 1 : -1); });
+  }
+}
+document.addEventListener('DOMContentLoaded', () => new SlidePresentation());
+</script>
+</body>
+</html>
