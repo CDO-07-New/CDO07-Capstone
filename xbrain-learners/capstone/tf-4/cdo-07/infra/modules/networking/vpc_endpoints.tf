@@ -38,6 +38,9 @@ locals {
     grafana_workspace = {
       service = "grafana-workspace"
     }
+    execute_api = {
+      service = "execute-api"
+    }
   }
 }
 

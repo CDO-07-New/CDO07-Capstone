@@ -61,7 +61,7 @@ resource "aws_apigatewayv2_integration" "alb" {
   connection_type        = "VPC_LINK"
   connection_id          = aws_apigatewayv2_vpc_link.this.id
   payload_format_version = "1.0"
-  timeout_milliseconds   = 5000
+  timeout_milliseconds   = 30000
 }
 
 resource "aws_apigatewayv2_route" "predict" {

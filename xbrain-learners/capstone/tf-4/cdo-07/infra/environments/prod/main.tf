@@ -155,6 +155,18 @@ module "ai_predict_api" {
   tags = local.common_tags
 }
 
+data "aws_network_interfaces" "alb" {
+  filter {
+    name   = "description"
+    values = ["ELB app/${split("/", module.networking.alb_arn_suffix)[1]}*"]
+  }
+}
+
+data "aws_network_interface" "alb_enis" {
+  for_each = toset(data.aws_network_interfaces.alb.ids)
+  id       = each.value
+}
+
 # --- Layer 4b: Window Feeder ---
 module "window_feeder" {
   source = "../../modules/lambda-scheduled-function"
@@ -182,9 +194,9 @@ module "window_feeder" {
     INFLUXDB_QUERY_WINDOW            = "2h"
     METRIC_WINDOW_STEP_SECONDS       = "300"
     FORWARD_FILL_LOOKBACK_SECONDS    = "900"
-    AI_ENGINE_PREDICT_URL            = "http://${module.networking.alb_dns_name}/v1/predict"
+    ALB_DNS_NAME                     = module.networking.alb_dns_name
+    ALB_PRIVATE_IPS                  = join(",", [for eni in data.aws_network_interface.alb_enis : eni.private_ip])
     AI_ENGINE_TIMEOUT_SECONDS        = "60"
-    AI_ENGINE_SIGV4_SERVICE          = "execute-api"
     DEPLOYMENT_VERSION               = "${local.project}-${local.environment}"
     BASELINE_S3_BUCKET               = module.s3_baseline.bucket_name
     INFERENCE_ENABLED_PARAMETER_NAME = "/${local.project}/${local.environment}/inference_enabled"
