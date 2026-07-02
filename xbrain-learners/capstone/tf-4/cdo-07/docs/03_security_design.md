@@ -19,74 +19,49 @@
 
 ```mermaid
 graph TD
-    %% External Clients
-    CLIENT["k6 Load Generator (External)"] -->|"HTTPS 443 — load test"| ALB
+    subgraph EXTERNAL["Môi trường bên ngoài (Internet / Public Network)"]
+        CLIENT["k6 Load Generator"]
+        SLACK["Slack Workspace"]
+    end
 
-    subgraph VPC["VPC (10.0.0.0/16) — us-east-1 (N. Virginia)"]
-        subgraph PRIV_SUB["Private Subnet (10.0.1.0/24) — AZ-a"]
-            ALB["ALB (tf4-cdo07-alb-sg) — Internal\nPath-based routing"]
-
-            subgraph APP_SG["ECS App SG (tf4-cdo07-app-sg)"]
-                MOCK["Mock Services\n(payment-gateway, fraud-detection, ledger-svc)\n3 Tasks · Node.js · 0.25vCPU/0.5GB each"]
-                AI["AI Engine (Fargate)\n0.5vCPU · 1GB RAM\nPOST /v1/predict"]
-            end
-
-            subgraph LAMBDA_SG["Lambda SG (tf4-cdo07-lambda-sg)"]
-                L_TRANS["Lambda Transformer\n(Python — PII DROP + Schema Whitelist)"]
-                L_FEED["Lambda Window Feeder\n(Query 2h · Call ALB /v1/predict)"]
-                L_CB["Lambda CB (Cost Circuit Breaker)"]
-                L_SLACK["Lambda SNS-to-SLACK"]
-                L_FALLBACK["Lambda Fail-Open Fallback\n(Static Thresholds)"]
-            end
-
-            VPCE["VPC Endpoints (tf4-cdo07-vpce-sg)\n- Interface: SSM, SNS, AMG (Grafana), ECR, CW, TS (Timestream), S3, KDS\n- Gateway: S3"]
+    subgraph VPC["VPC (10.0.0.0/16) — us-east-1"]
+        subgraph PRIV_SUB["Private Subnet (10.0.1.0/24) — Khép kín hoàn toàn"]
+            ALB["Internal ALB\n(tf4-cdo07-alb-sg)"]
+            
+            APP_SG["ECS App SG\n(tf4-cdo07-app-sg)\n- Mock Services\n- AI Engine"]
+            
+            LAMBDA_SG["Lambda SG\n(tf4-cdo07-lambda-sg)\n- Transformer\n- Window Feeder\n- Cost CB\n- Fail-Open Fallback"]
+            
+            VPCE["VPC Endpoints\n(tf4-cdo07-vpce-sg)\n- SSM, SNS, AMG, ECR,\n  CW, TS, S3, KDS"]
+            
+            INFLUX_SG["InfluxDB SG\n(tf4-cdo07-influxdb-sg)\n- Timestream for InfluxDB"]
         end
     end
 
-    subgraph AWS["AWS Managed Services (Private Network)"]
-        KDS["Kinesis Data Streams\n(On-Demand)"]
-        TSDB["Amazon Timestream for InfluxDB\n(db.influx.medium · 300GB · Single-AZ)"]
-        S3_AUDIT["S3 audit logs\n(Encrypted by KMS)"]
-        S3_BASE["S3 Model Baselines\n(α, β, γ params)"]
-        SSM["SSM Param Store\n(inference_enabled)"]
-        SNS["SNS Topic\n(drift-alert -> Slack / 5-part recommendation)"]
-        GRAFANA["Managed Grafana\n(Timestream Plugin direct · Annotation overlay)"]
-        BUDGETS["AWS Budgets\n(Threshold $160/80%)"]
+    subgraph AWS["AWS Managed Services Network (Private)"]
+        AWS_SERVS["AWS Services\n(KDS, S3, SSM, SNS, CloudWatch, AMG)"]
     end
 
-    SLACK["Slack\nAlert Webhook"]
+    subgraph NON_VPC["AWS Managed Network (Non-VPC)"]
+        L_SLACK["Lambda SNS-to-SLACK\n(Ngoại lệ Internet duy nhất)"]
+    end
 
-    %% Network Security Flows
-    ALB -->|"HTTP 8080"| APP_SG
-    MOCK -->|"emit metric (3 services)"| KDS
-    MOCK -->|"POST /v1/predict (timeout=5s)"| ALB
-    AI -->|"read baseline"| S3_BASE
-    AI -->|"write audit"| S3_AUDIT
-    AI -->|"push annotation"| GRAFANA
-    KDS -->|"event source mapping"| L_TRANS
-    L_TRANS -->|"write time-series (filtered)\nHTTP Query API /api/v2/query"| TSDB
-    APP_SG -->|"HTTPS via VPC Endpoints"| VPCE
-    LAMBDA_SG -->|"HTTPS via VPC Endpoints"| VPCE
-    VPCE -->|"Private Route"| KDS
-    VPCE -->|"Private Route"| TSDB
-    VPCE -->|"Private Route"| SSM
-    VPCE -->|"Private Route"| SNS
-    VPCE -->|"Private Route"| GRAFANA
-    L_FEED -->|"check enabled?"| SSM
-    L_FEED -->|"query 2h window"| TSDB
-    L_FEED -->|"POST /v1/predict (timeout=300.0s)"| ALB
-    L_FEED -->|"drift → alert"| SNS
-    L_FEED -->|"write audit"| S3_AUDIT
-    L_FEED -.->|"on timeout / AI down"| L_FALLBACK
-    L_FALLBACK -->|"drift → alert"| SNS
-    L_FALLBACK -->|"push annotation"| GRAFANA
-    L_FALLBACK -->|"write audit"| S3_AUDIT
-    SNS -->|"drift → alert"| L_SLACK
-    BUDGETS -->|"$200 breach"| L_CB
-    L_CB -->|"set false"| SSM
-    L_SLACK -->|"HTTP POST"| SLACK
-    GRAFANA -->|"view"| SRE["SRE / On-Call\n(Manual Approve Gate)"]
-    S3_AUDIT -->|"Lifecycle policy (90 days)"| S3_GLACIER["S3 Glacier Audit logs"]
+    %% Network Connection Flows (Các kết nối mạng / SG Rules)
+    CLIENT -->|"HTTPS 443 (Inbound qua SSM Port Forwarding)"| ALB
+    
+    ALB -->|"HTTP 8080 (Inbound allowed)"| APP_SG
+    
+    APP_SG -->|"HTTPS 443 (Predict requests)"| ALB
+    LAMBDA_SG -->|"HTTPS 443 (Predict requests)"| ALB
+    
+    APP_SG & LAMBDA_SG -->|"HTTPS 443 (Inbound allowed)"| VPCE
+    VPCE -->|"AWS PrivateLink"| AWS_SERVS
+    
+    LAMBDA_SG -->|"TCP 8086 (Inbound allowed)"| INFLUX_SG
+    
+    AWS_SERVS -.->|"Event / Trigger nội bộ AWS"| LAMBDA_SG
+    AWS_SERVS -.->|"SNS Trigger"| L_SLACK
+    L_SLACK -->|"HTTPS 443 (Outbound)"| SLACK
 ```
 
 > **Đồng bộ hạ tầng**: Sơ đồ trên phản ánh đúng cấu trúc mạng thực tế được thiết lập đồng bộ với tài liệu hạ tầng [`02_infra_design.md`](02_infra_design.md) và sơ đồ kiến trúc [`CDO7.drawio.png`](images/CDO7.drawio.png). Hệ thống được triển khai khép kín hoàn toàn trong một Subnet duy nhất là `Private Subnet (10.0.1.0/24)` và Application Load Balancer là **Internal ALB**, không sử dụng Internet Gateway hay NAT Gateway để đảm bảo chuẩn bảo mật Zero-Trust. Pipeline xử lý dữ liệu: **Mock Services → Kinesis Data Streams → Lambda Transformer (PII DROP + Schema Whitelist) → Timestream for InfluxDB** (HTTP Query API `/api/v2/query`). Lambda Transformer đọc trực tiếp từ KDS qua **event source mapping** (không qua Firehose). Luồng `k6 → ALB` và `Mock Services → ALB /v1/predict` đều kết thúc tại **AI Engine (ECS Fargate)**.
@@ -95,11 +70,11 @@ graph TD
 
 | Tên SG (SG name) | Inbound | Outbound | Gắn với (Attached to) |
 |---|---|---|---|
-| `tf4-cdo07-alb-sg` | HTTPS 443 từ **k6 Load Generator** (load test); HTTP 8080 từ `tf4-cdo07-app-sg` (Mock Services → `/v1/predict`); HTTPS 443 từ `tf4-cdo07-lambda-sg` (Window Feeder → `/v1/predict`) | 8080 (HTTP) → `tf4-cdo07-app-sg` (AI Engine) | Application Load Balancer (Internal) — được quản lý bởi `terraform-aws-modules/alb` |
-| `tf4-cdo07-app-sg` | 8080 từ `tf4-cdo07-alb-sg` | 443 → `tf4-cdo07-vpce-sg` (VPC Endpoints cho ECR, CW, KDS); HTTPS → `tf4-cdo07-alb-sg` (Mock Services gọi `/v1/predict`) | ECS Tasks: Mock Services (3 tasks) & AI Engine |
-| `tf4-cdo07-lambda-sg` | (Không inbound — KDS event source mapping trigger Lambda Transformer; EventBridge Scheduler trigger Lambda Window Feeder; SNS trigger Lambda SNS-to-SLACK và Lambda Fail-Open Fallback; AWS Budgets trigger Lambda CB) | 443 → `tf4-cdo07-vpce-sg` (VPC Endpoints cho SSM, SNS, AMG, ECR, CW, TS, KDS, S3); 443 → `tf4-cdo07-alb-sg` (Window Feeder → AI Engine `/v1/predict`) | Lambda Transformer, Lambda Window Feeder, Lambda CB, Lambda Fail-Open Fallback, Lambda SNS-to-SLACK |
-| `tf4-cdo07-vpce-sg` | 443 từ `tf4-cdo07-app-sg` (ECS tasks) & `tf4-cdo07-lambda-sg` | (Không outbound — AWS-managed interface) | Tất cả Interface VPC Endpoints (SSM, SNS, AMG/Grafana, ECR, CW, TS/Timestream, S3, KDS) |
-| `tf4-cdo07-influxdb-sg` | 8086 từ `tf4-cdo07-lambda-sg` (Lambda Transformer ghi qua HTTP API; Window Feeder truy vấn) | (Không outbound cần thiết) | Amazon Timestream for InfluxDB instance |
+| `tf4-cdo07-alb-sg` | HTTPS 443 từ **k6 Load Generator** (load test), `tf4-cdo07-app-sg` (Mock Services), và `tf4-cdo07-lambda-sg` (Window Feeder) | HTTP 8080 → `tf4-cdo07-app-sg` (AI Engine) | Application Load Balancer (Internal) — quản lý bởi `terraform-aws-modules/alb` |
+| `tf4-cdo07-app-sg` | HTTP 8080 từ `tf4-cdo07-alb-sg` | HTTPS 443 → `tf4-cdo07-alb-sg` (Mock Services gọi `/v1/predict`); HTTPS 443 → `tf4-cdo07-vpce-sg` (VPC Endpoints) | ECS Tasks: Mock Services (3 tasks) & AI Engine |
+| `tf4-cdo07-lambda-sg` | (Không inbound — KDS event source mapping trigger Lambda Transformer; EventBridge Scheduler trigger Lambda Window Feeder; SNS trigger Lambda Fail-Open Fallback; AWS Budgets trigger Lambda CB) | HTTPS 443 → `tf4-cdo07-vpce-sg` (VPC Endpoints); HTTPS 443 → `tf4-cdo07-alb-sg` (Window Feeder → `/v1/predict`); TCP 8086 → `tf4-cdo07-influxdb-sg` | Lambda Transformer, Lambda Window Feeder, Lambda CB, Lambda Fail-Open Fallback |
+| `tf4-cdo07-vpce-sg` | HTTPS 443 từ `tf4-cdo07-app-sg` (ECS tasks) & `tf4-cdo07-lambda-sg` | (Không outbound — AWS-managed interface) | Tất cả Interface VPC Endpoints (SSM, SNS, AMG/Grafana, ECR, CW, TS/Timestream, S3, KDS) |
+| `tf4-cdo07-influxdb-sg` | TCP 8086 từ `tf4-cdo07-lambda-sg` (Lambda Transformer ghi; Window Feeder truy vấn) | (Không outbound cần thiết) | Amazon Timestream for InfluxDB instance |
 
 > **Ghi chú triển khai**: Lambda Transformer sử dụng **KDS event source mapping** trực tiếp (polling từ KDS shard) — không qua Kinesis Firehose. `tf4-cdo07-app-sg` được tạo riêng cho ECS Tasks (Mock Services + AI Engine), tách biệt với ALB SG để tuân thủ nguyên tắc least-privilege ở cấp SG.
 
