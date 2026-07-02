@@ -94,7 +94,7 @@ Bảng dưới đây minh họa sự tối ưu hóa chi phí khi hệ thống sc
 
 *   **Fargate Compute Savings Plan**: Đăng ký gói Cam kết 1-3 năm sẽ giúp giảm tới 20-50% chi phí chạy AI Engine tasks và mock services.
 *   **Timestream for InfluxDB Reserved Instances**: Lựa chọn Single-AZ hoặc sizing nhỏ hơn khi go-live, mua RI để giảm chi phí instance cố định ($116.40/tháng).
-*   **VPC Endpoints (Gateway vs Interface)**: Chuyển đổi VPC Endpoint cho S3 sang dạng Gateway (miễn phí) thay vì Interface để tiết kiệm chi phí theo giờ.
+*   **VPC Endpoints optimization**: Hệ thống hiện tại đã dùng S3 Gateway Endpoint (miễn phí). Để tối ưu thêm ở Production, có thể cân nhắc tắt các Interface Endpoints không thiết yếu ở môi trường test/sandbox (như SSM, SNS) hoặc chỉ bật endpoints tại các AZs thực sự có Fargate tasks chạy để giảm chi phí duy trì cổng kết nối ($50.40/tháng).
 *   **ADOT / Metric Collection optimization**: Hạn chế high-cardinality labels trong time-series data để tránh phình dung lượng InfluxDB.
 
 ## Related documents
