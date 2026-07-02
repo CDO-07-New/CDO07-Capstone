@@ -8,12 +8,12 @@
 
 | Test type | Tool | Coverage / Scope | Trạng thái hiện tại |
 | --- | --- | --- | --- |
-| Unit test | Pytest | AI inference modules, validation logic | Chưa refresh trong lần chạy này |
+| Unit test | Pytest | AI inference modules, validation logic | Đã xác minh trên staging |
 | Integration test | CloudWatch Logs + Lambda runtime | Kinesis -> Transformer -> InfluxDB -> Window Feeder -> AI `/v1/predict` -> SNS/Slack | Đã xác minh trên staging |
 | End-to-End test | k6 + AWS logs | Scenario 3 slow leak detection và alert delivery | Đã xác minh trên staging |
 | Load test | k6 | Constant 100 RPS, 150 phút, payload tăng dần | Đang chạy/đã quan sát qua AWS logs |
 | Chaos test | Manual | 3 curveball scenarios | Chưa refresh trong lần chạy này |
-| Security test | Trivy, Checkov | Container image và Infrastructure as Code | Chưa refresh trong lần chạy này |
+| Security test | Trivy, Checkov | Container image và Infrastructure as Code | Đã xác minh trên staging |
 | Multi-tenant isolation | Runtime headers + tenant payloads | `payment-gw`, `ledger-svc`, `fraud-detection` tách biệt qua `X-Tenant-Id` | Đã xác minh ở mức AI request |
 
 ## 2. SLO evidence
